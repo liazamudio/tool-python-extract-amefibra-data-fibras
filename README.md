@@ -1,112 +1,68 @@
-# Índice FIBRAS — AMEFIBRA Scraper
+# AMEFIBRA Índice FIBRAS Scraper
 
-Script en Python que extrae la tabla del **Índice FIBRAS** publicada por
-[AMEFIBRA](https://amefibra.com/el-mercado/indice-fibras/) (Asociación Mexicana
-de FIBRAs Inmobiliarias y de Infraestructura) y la deja lista para usarse como
-`DataFrame` de pandas, CSV o Excel.
+Herramienta de línea de comandos que extrae el Índice FIBRAS de AMEFIBRA en tiempo real y lo entrega como tabla en consola, CSV o Excel, para analistas e inversionistas que necesitan estos datos fuera del navegador.
 
-## ¿Por qué no basta con `requests.get(...)`?
+<!-- COMPLETAR: agregar un GIF o captura de pantalla mostrando la ejecución del script en consola (por ejemplo, grabando `python amefibra-indice.fibras.py` corriendo y su salida). No se pudo generar automáticamente porque requiere una grabación de pantalla. -->
 
-La tabla de indicadores no viene en el HTML de la página. Está incrustada en un
-`<iframe>` que apunta a `amefibra.edimex.com.mx/Emisora/Reportes`, y esa página
-arma la tabla vía JavaScript y actualiza los precios en tiempo real por
-WebSocket (dato con ~20 minutos de retraso, según el propio sitio). Una
-petición HTTP simple solo trae la plantilla vacía, sin datos.
+## Problema / Motivación
 
-Por eso este script usa **Playwright** para abrir la página en un navegador
-real (headless), esperar a que el WebSocket llene la tabla, y luego extraer
-esa tabla ya renderizada con **pandas**.
+La tabla de indicadores del Índice FIBRAS no viene en el HTML de la página de AMEFIBRA: está incrustada en un `<iframe>` que arma la tabla vía JavaScript y actualiza los precios en tiempo real por WebSocket (con ~20 minutos de retraso, según el propio sitio). Una petición HTTP simple (`requests.get`) solo trae la plantilla vacía, sin datos, por lo que se necesita un navegador real para renderizarla y poder extraerla de forma automatizada.
 
-## Características
+## Demo
 
-- Localiza automáticamente el iframe correcto entre los tres que expone la
-  página (tabla de indicadores, gráfica y marquesina).
-- Espera activamente a que lleguen datos en vivo antes de leer la tabla, con
-  timeout configurable.
-- Limpia encabezados (quita flechas de ordenamiento `↑↓` y espacios extra).
-- Descarta columnas totalmente vacías (p. ej. el ícono de tendencia).
-- Exporta a CSV (`utf-8-sig`, compatible con Excel) y/o XLSX.
-- Modo visible (`--show-browser`) para depurar el scraping viendo el navegador.
-- Solo lee información pública, sin credenciales ni endpoints privados.
+<!-- COMPLETAR: no hay una versión en vivo desplegada (es un script de CLI, no una app web). Si se desea, agregar aquí un GIF o capturas de la salida en consola / archivos CSV-Excel generados. -->
 
-## Requisitos
+## Stack técnico
 
-- Python 3.10 o superior.
-- Google Chrome/Chromium (lo instala Playwright, ver abajo).
+- **Lenguaje:** Python 3
+- **Automatización de navegador:** [Playwright](https://playwright.dev/python/) (Chromium headless) — para esperar el WebSocket y renderizar la tabla
+- **Procesamiento de datos:** [pandas](https://pandas.pydata.org/) + [lxml](https://lxml.de/) (parseo de la tabla HTML renderizada)
+- **Exportación:** [openpyxl](https://openpyxl.readthedocs.io/) (Excel `.xlsx`), CSV nativo de pandas
+- **Base de datos:** No aplica — el script no persiste datos, solo exporta a archivo local
+- **Infraestructura/Deploy:** No aplica — script de CLI de ejecución local, sin pipeline de CI/CD ni despliegue configurado en el repositorio
 
-## Instalación
+## Características principales
 
-### 1. Crear y activar el entorno virtual
+- Localiza automáticamente el `<iframe>` correcto de la tabla de indicadores entre los tres que expone la página (tabla, gráfica y marquesina)
+- Espera activamente a que lleguen datos en vivo por WebSocket antes de leer la tabla, con timeout configurable (`--timeout`)
+- Limpia encabezados de columna (quita flechas de ordenamiento `↑↓` y espacios sobrantes)
+- Descarta columnas totalmente vacías (p. ej. el ícono de tendencia)
+- Exporta a CSV (`utf-8-sig`, compatible con Excel) y/o XLSX en la misma corrida (`--csv`, `--xlsx`)
+- Modo con navegador visible (`--show-browser`) para depurar el scraping visualmente
+- Solo lee información pública ya publicada en la página, sin credenciales ni endpoints privados
 
-Si el proyecto aún no tiene un entorno virtual `venv`, créalo desde la raíz
-del proyecto:
+## Cómo correrlo localmente
 
-```powershell
+Requiere Python 3.10 o superior.
+
+```bash
+# 1. Clonar el repositorio
+git clone <url-del-repositorio>
+cd tool-python-extract-amefibra-data-fibras
+
+# 2. Crear y activar el entorno virtual
 python -m venv venv
-```
 
-Actívalo según tu shell:
-
-```powershell
-# PowerShell
+# Windows (PowerShell)
 .\venv\Scripts\Activate.ps1
-```
-
-```bat
-:: cmd.exe
+# Windows (cmd.exe)
 venv\Scripts\activate.bat
-```
+# Linux / macOS
+source venv/bin/activate
 
-```bash
-# Git Bash / WSL / Linux / macOS
-source venv/Scripts/activate   # Windows (Git Bash)
-source venv/bin/activate       # Linux / macOS
-```
-
-Al activarse correctamente, el prompt debe mostrar el prefijo `(venv)`.
-
-> **El entorno no se activa o no lo reconoce el sistema (PowerShell)**
-> Si `Activate.ps1` falla con un error de política de ejecución de scripts,
-> habilita la ejecución para el usuario actual y vuelve a intentarlo:
-> ```powershell
-> Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
-> .\venv\Scripts\Activate.ps1
-> ```
->
-> Si el entorno se corrompió o quieres empezar de cero, elimínalo y créalo de
-> nuevo:
-> ```powershell
-> Remove-Item -Recurse -Force venv
-> python -m venv venv
-> .\venv\Scripts\Activate.ps1
-> ```
->
-> Como alternativa, siempre puedes invocar el intérprete del `venv`
-> directamente sin activarlo, tanto para instalar dependencias como para
-> ejecutar el script:
-> ```powershell
-> venv\Scripts\python.exe -m pip install -r requirements.txt
-> venv\Scripts\python.exe amefibra-indice.fibras.py
-> ```
-
-### 2. Instalar las librerías
-
-Con el entorno activado:
-
-```bash
+# 3. Instalar dependencias
 pip install -r requirements.txt
-```
 
-### 3. Instalar el navegador de Playwright
-
-Playwright necesita descargar su propio binario de Chromium (no usa el Chrome
-del sistema):
-
-```bash
+# 4. Instalar el navegador que usa Playwright (Chromium)
 playwright install chromium
+
+# 5. Ejecutar el script
+python amefibra-indice.fibras.py
 ```
 
-## Uso
+Variables de entorno: no aplica — el script no requiere configuración por variables de entorno ni credenciales.
+
+### Opciones de ejecución
 
 ```bash
 # Imprime la tabla en consola
@@ -122,25 +78,54 @@ python amefibra-indice.fibras.py --show-browser
 python amefibra-indice.fibras.py --timeout 45000
 ```
 
-### Argumentos disponibles
+| Argumento | Descripción |
+|---|---|
+| `--csv ARCHIVO.csv` | Ruta donde guardar un CSV (opcional) |
+| `--xlsx ARCHIVO.xlsx` | Ruta donde guardar un Excel (opcional) |
+| `--show-browser` | Corre con el navegador visible en vez de headless |
+| `--timeout MS` | Milisegundos a esperar los datos en vivo (default: `30000`) |
 
-| Argumento        | Descripción                                                          |
-|-------------------|-----------------------------------------------------------------------|
-| `--csv ARCHIVO.csv`   | Ruta donde guardar un CSV (opcional)                              |
-| `--xlsx ARCHIVO.xlsx` | Ruta donde guardar un Excel (opcional)                            |
-| `--show-browser`      | Corre con el navegador visible en vez de headless                |
-| `--timeout MS`        | Milisegundos a esperar los datos en vivo (default: `30000`)       |
+### Si el entorno virtual no se activa
 
-## Notas
+Si `Activate.ps1` falla en PowerShell por política de ejecución de scripts:
 
-- El sitio aclara que la información es solo para consulta/análisis, no como
-  base para decisiones de inversión. Este script respeta eso: solo lee lo que
-  ya se publica públicamente en la página, sin usar credenciales ni endpoints
-  privados.
-- Si AMEFIBRA/Economatica cambian el HTML o el proveedor de datos, el script
-  puede requerir ajustes (ver la función `_extraer_html_tabla`).
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+.\venv\Scripts\Activate.ps1
+```
+
+Si el entorno quedó corrupto, elimínalo y créalo de nuevo:
+
+```powershell
+Remove-Item -Recurse -Force venv
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+```
+
+También puedes invocar el intérprete del `venv` directamente sin activarlo:
+
+```bash
+venv/Scripts/python.exe -m pip install -r requirements.txt
+venv/Scripts/python.exe amefibra-indice.fibras.py
+```
+
+## Decisiones técnicas relevantes
+
+- **Playwright en vez de `requests`:** la tabla se renderiza vía JavaScript y WebSocket del lado del cliente, así que una petición HTTP simple solo devuelve la plantilla vacía. Se necesita un navegador real (aunque sea headless) para esperar a que los datos lleguen antes de leer el DOM.
+- **`pd.read_html` sobre `io.StringIO`:** pandas ya no acepta de forma confiable un string de HTML crudo pasado directo a `read_html()` (lo puede interpretar como ruta de archivo); se envuelve explícitamente en `io.StringIO` para evitar ese comportamiento.
+
+<!-- COMPLETAR: agregar trade-offs adicionales que solo el autor conoce, por ejemplo: por qué Playwright y no Selenium/Puppeteer, por qué lanzar un navegador nuevo por ejecución en vez de mantener una sesión persistente, o por qué no se cachean/persisten los datos entre corridas. No se pudo inferir del código porque no hay comentarios ni commits que lo documenten. -->
+
+## Estado del proyecto
+
+<!-- COMPLETAR: confirmar si el proyecto está Activo, Mantenido o Archivado. Basado en el historial de git, la última actividad registrada es el commit "d45abb9 Implementación de LICENSE y README" (repositorio con 3 commits en total, sin CHANGELOG.md); no se puede inferir el estado de mantenimiento real ni la intención a futuro solo del historial. -->
+
+## Autor / Rol
+
+**Alex Zamudio** ([liazamudio@gmail.com](mailto:liazamudio@gmail.com)) — único autor y contribuidor registrado en el historial de git.
+
+<!-- COMPLETAR: especificar el rol si este proyecto formó parte de un equipo o contexto laboral/freelance más amplio (el historial de git solo muestra un autor, consistente con proyecto individual). -->
 
 ## Licencia
 
-Este proyecto está bajo la licencia MIT. Ver [LICENSE](LICENSE) para más
-detalles.
+MIT — ver [LICENSE](LICENSE).
