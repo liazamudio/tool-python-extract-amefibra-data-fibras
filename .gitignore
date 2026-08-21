@@ -3,6 +3,9 @@ venv/
 .venv/
 env/
 
+# Notas/material de trabajo personal, no destinado al repositorio
+previous/
+
 # Carpeta de resultados generados por el script (CSV/XLSX exportados)
 output/
 *.csv
