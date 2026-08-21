@@ -1,0 +1,51 @@
+# Entorno virtual
+venv/
+.venv/
+env/
+
+# Carpeta de resultados generados por el script (CSV/XLSX exportados)
+output/
+*.csv
+*.xlsx
+*.xls
+
+# Bytecode / cache de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Cache de herramientas de tipado/lint/test
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytest_cache/
+.ruff_cache/
+
+# Empaquetado / distribución
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Playwright: navegadores descargados y reportes de prueba
+.playwright/
+playwright-report/
+test-results/
+
+# Variables de entorno / secretos
+.env
+.env.*
+!.env.example
+
+# Editores / IDEs
+.idea/
+*.swp
+*.swo
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log

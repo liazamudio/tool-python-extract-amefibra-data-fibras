@@ -27,7 +27,8 @@ La tabla de indicadores del Índice FIBRAS no viene en el HTML de la página de 
 - Espera activamente a que lleguen datos en vivo por WebSocket antes de leer la tabla, con timeout configurable (`--timeout`)
 - Limpia encabezados de columna (quita flechas de ordenamiento `↑↓` y espacios sobrantes)
 - Descarta columnas totalmente vacías (p. ej. el ícono de tendencia)
-- Exporta a CSV (`utf-8-sig`, compatible con Excel) y/o XLSX en la misma corrida (`--csv`, `--xlsx`)
+- En cada corrida archiva automáticamente un CSV "analítico" en `output/`, con nombre `AAAAMMDD_HHMMSS_indice_fibras_amefibra.csv`: encabezados en snake_case, porcentajes como `float`, y columnas `fecha_hora_extraccion`/`fuente_datos` para trazabilidad — listo para pandas/R/BI sin limpieza adicional
+- Además, exporta a CSV (`utf-8-sig`, compatible con Excel) y/o XLSX con nombre y ruta a elección en la misma corrida (`--csv`, `--xlsx`)
 - Modo con navegador visible (`--show-browser`) para depurar el scraping visualmente
 - Solo lee información pública ya publicada en la página, sin credenciales ni endpoints privados
 
@@ -119,6 +120,8 @@ venv/Scripts/python.exe amefibra-indice.fibras.py
 ## Estado del proyecto
 
 <!-- COMPLETAR: confirmar si el proyecto está Activo, Mantenido o Archivado. Basado en el historial de git, la última actividad registrada es el commit "d45abb9 Implementación de LICENSE y README" (repositorio con 3 commits en total, sin CHANGELOG.md); no se puede inferir el estado de mantenimiento real ni la intención a futuro solo del historial. -->
+
+Activo en proceso de desarrollo.
 
 ## Autor / Rol
 
