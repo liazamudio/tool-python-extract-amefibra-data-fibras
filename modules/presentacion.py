@@ -5,6 +5,7 @@ from html import escape
 from pathlib import Path
 from typing import Optional
 
+import ipywidgets as widgets
 import pandas as pd
 from IPython.display import HTML, display
 
@@ -150,3 +151,23 @@ def mostrar_ficha_rendimiento(
     print(f"Ficha generada: {ruta}")
     display(HTML(ruta.read_text(encoding="utf-8")))
     return ruta
+
+
+def seleccionar_anio_interactivo(años_disponibles: list[int], valor_simulado: Optional[int] = None) -> widgets.Dropdown:
+    """Despliega un dropdown para elegir, de los años con datos disponibles, cuál consultar.
+
+    Devuelve el widget: en uso interactivo, el usuario cambia la selección en el
+    notebook y una celda posterior lee `selector.value`. `valor_simulado` fija el
+    valor inicial del dropdown para pruebas automatizadas (donde no hay un usuario
+    real interactuando con el widget); si no es uno de los años disponibles, se
+    lanza un error claro en vez de continuar con un año inválido.
+    """
+    if not años_disponibles:
+        raise ValueError("No hay años disponibles para este ticker.")
+    if valor_simulado is not None and valor_simulado not in años_disponibles:
+        raise ValueError(f"El año {valor_simulado} no está disponible. Años válidos: {años_disponibles}.")
+    print(f"Hay información disponible de {min(años_disponibles)} a {max(años_disponibles)}.")
+    valor_inicial = valor_simulado if valor_simulado is not None else max(años_disponibles)
+    selector = widgets.Dropdown(options=años_disponibles, value=valor_inicial, description="Año:")
+    display(selector)
+    return selector

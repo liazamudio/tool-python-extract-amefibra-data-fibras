@@ -59,3 +59,9 @@ def _detectar_periodicidad(fechas: pd.Series) -> str:
     if mediana <= 120:
         return "trimestral"
     return "otra"
+
+
+def obtener_anios_disponibles(historial: pd.DataFrame) -> list[int]:
+    """Años calendario con al menos una distribución en `historial`, del más reciente al más antiguo."""
+    años = pd.to_datetime(historial["ex_date"], errors="coerce").dt.year.dropna().astype(int)
+    return sorted(años.unique().tolist(), reverse=True)
