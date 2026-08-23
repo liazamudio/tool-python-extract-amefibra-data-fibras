@@ -1,4 +1,4 @@
-# AMEFIBRA Índice FIBRAS Scraper
+git# AMEFIBRA Índice FIBRAS Scraper
 
 Herramienta de línea de comandos que extrae el Índice FIBRAS de AMEFIBRA en tiempo real y lo entrega como tabla en consola, CSV o Excel, para analistas e inversionistas que necesitan estos datos fuera del navegador.
 
