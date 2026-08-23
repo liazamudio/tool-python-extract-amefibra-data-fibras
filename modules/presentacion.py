@@ -6,8 +6,15 @@ from pathlib import Path
 from typing import Optional
 
 import pandas as pd
+from IPython.display import HTML, display
 
-from .extraccion import _descargar_cierres_anuales, obtener_distribuciones
+from .extraccion import (
+    COLUMNAS_DISTRIBUCIONES,
+    URL_PAGINA,
+    _descargar_cierres_anuales,
+    obtener_distribuciones,
+    obtener_tabla_fibras_en_notebook,
+)
 from .procesamiento import _normalizar_ticker, normalizar_para_analisis
 
 
@@ -71,8 +78,8 @@ def crear_ficha_rendimiento(
     max_componente = max(abs(total_dividendos), abs(variacion_capital), 0.000001)
     ancho_dividendos = abs(total_dividendos) / max_componente * 100
     ancho_capital = abs(variacion_capital) / max_componente * 100
-    color_capital = "#c4513d" if variacion_capital < 0 else "#2f7d68"
-    color_total = "#c4513d" if rendimiento_total < 0 else "#1e5b52"
+    color_capital = "#e0725c" if variacion_capital < 0 else "#4fae8c"
+    color_total = "#e0725c" if rendimiento_total < 0 else "#5fd9b0"
     tabla_pagos = pagos[["ex_date", "amount_mxn", "yield_pct"]].sort_values("ex_date").copy()
     tabla_pagos["ex_date"] = tabla_pagos["ex_date"].dt.strftime("%Y-%m-%d")
     tabla_pagos["amount_mxn"] = tabla_pagos["amount_mxn"].map(lambda valor: f"${valor:,.4f}")
@@ -81,7 +88,7 @@ def crear_ficha_rendimiento(
     html = f"""<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><title>Ficha {escape(ticker_base)} {año}</title>
 <style>
-body{{margin:0;background:#f3f0ea;color:#183b3a;font-family:Georgia,serif}}main{{max-width:900px;margin:32px auto;padding:32px;background:#fffdf8;box-shadow:0 8px 24px #183b3a18}}h1{{margin:0 0 6px;font-size:36px}}.subtitle{{color:#66817a;margin-bottom:28px}}.metrics{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}}.metric{{border-top:3px solid #d8a24a;padding:12px 0}}.label{{font:12px sans-serif;text-transform:uppercase;letter-spacing:1px;color:#66817a}}.value{{font-size:24px;margin-top:6px}}.total{{margin:28px 0;padding:18px;background:#e6f0e9;border-left:5px solid {color_total}}}.total strong{{font-size:34px;color:{color_total}}}.bar{{height:28px;display:flex;margin:12px 0 8px;background:#eadfd1}}.bar div{{height:100%}}.legend{{font:14px sans-serif;color:#49635e}}table{{width:100%;border-collapse:collapse;font:14px sans-serif;margin-top:20px}}th,td{{padding:9px;border-bottom:1px solid #ddd;text-align:left}}th{{color:#66817a}}.notice{{margin-top:28px;font:12px sans-serif;color:#66817a}}@media(max-width:650px){{main{{margin:0;padding:22px}}h1{{font-size:29px}}.metrics{{grid-template-columns:1fr 1fr}}}}
+body{{margin:0;background:#12201e;color:#e8ede9;font-family:Georgia,serif}}main{{max-width:900px;margin:32px auto;padding:32px;background:#1b2926;box-shadow:0 8px 24px #00000066}}h1{{margin:0 0 6px;font-size:36px}}.subtitle{{color:#8ba39c;margin-bottom:28px}}.metrics{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}}.metric{{border-top:3px solid #d8a24a;padding:12px 0}}.label{{font:12px sans-serif;text-transform:uppercase;letter-spacing:1px;color:#8ba39c}}.value{{font-size:24px;margin-top:6px}}.total{{margin:28px 0;padding:18px;background:#1e352e;border-left:5px solid {color_total}}}.total strong{{font-size:34px;color:{color_total}}}.bar{{height:28px;display:flex;margin:12px 0 8px;background:#2a3835}}.bar div{{height:100%}}.legend{{font:14px sans-serif;color:#9db3ac}}table{{width:100%;border-collapse:collapse;font:14px sans-serif;margin-top:20px}}th,td{{padding:9px;border-bottom:1px solid #30423e;text-align:left}}th{{color:#8ba39c}}.notice{{margin-top:28px;font:12px sans-serif;color:#8ba39c}}@media(max-width:650px){{main{{margin:0;padding:22px}}h1{{font-size:29px}}.metrics{{grid-template-columns:1fr 1fr}}}}
 </style></head><body><main>
 <h1>Ficha de rendimiento: {escape(ticker_base)}</h1><div class="subtitle">Año calendario {año} · cierres del {fecha_inicial} al {fecha_final}</div>
 <div class="metrics"><div class="metric"><div class="label">Precio inicial</div><div class="value">${precio_inicial:,.2f} MXN</div></div><div class="metric"><div class="label">Precio final</div><div class="value">${precio_final:,.2f} MXN</div></div><div class="metric"><div class="label">Variación de precio</div><div class="value">{rendimiento_capital:,.2f}%</div></div></div>
@@ -94,4 +101,52 @@ body{{margin:0;background:#f3f0ea;color:#183b3a;font-family:Georgia,serif}}main{
     momento = datetime.now()
     ruta = carpeta_salida / f"{momento:%Y%m%d_%H%M%S}_{ticker_base}_{año}_ficha_rendimiento.html"
     ruta.write_text(html, encoding="utf-8")
+    return ruta
+
+
+def ejecutar_extraccion_indice(
+    headless: bool,
+    timeout_datos_ms: int,
+    carpeta_salida: Path,
+    exportar_csv: bool = True,
+) -> pd.DataFrame:
+    """Descarga la tabla del Índice FIBRAS, la muestra y (opcionalmente) exporta el CSV analítico."""
+    print(f"Consultando {URL_PAGINA} ...")
+    df = obtener_tabla_fibras_en_notebook(headless=headless, timeout_datos_ms=timeout_datos_ms)
+    print(f"Índice FIBRAS - {datetime.now():%Y-%m-%d %H:%M} (dato con ~20 min de retraso)")
+    display(df)
+    if exportar_csv:
+        ruta = exportar_csv_analitico(df, carpeta_salida)
+        print(f"CSV analítico guardado en: {ruta}")
+    return df
+
+
+def probar_historial_dividendos(ticker: str, emisoras: pd.Series, carpeta_salida: Path) -> pd.DataFrame:
+    """Descarga el historial de dividendos de `ticker`, valida su forma y muestra un resumen."""
+    assert ticker in set(emisoras), "El ticker de prueba no está en el listado AMEFIBRA."
+    historial = obtener_distribuciones(ticker, carpeta_salida)
+    assert list(historial.columns) == COLUMNAS_DISTRIBUCIONES
+    assert historial["ex_date"].is_monotonic_increasing
+    assert not historial.duplicated(subset=["ticker", "ex_date", "amount_mxn"]).any()
+    assert (historial["amount_mxn"] > 0).all()
+    assert historial["annualized_yield_pct"].notna().all()
+    assert Path(historial.attrs["ruta_csv"]).exists()
+
+    print(f"Ticker probado: {ticker}. Registros: {len(historial)}")
+    print(f"Periodicidad detectada: {historial['periodicity'].iloc[0]}")
+    print(f"CSV generado: {historial.attrs['ruta_csv']}")
+    display(historial.tail(10))
+    return historial
+
+
+def mostrar_ficha_rendimiento(
+    ticker: str,
+    año: int,
+    carpeta_salida: Path,
+    historial: Optional[pd.DataFrame] = None,
+) -> Path:
+    """Genera la ficha de rendimiento con `crear_ficha_rendimiento` y la muestra en el notebook."""
+    ruta = crear_ficha_rendimiento(ticker, año, carpeta_salida, historial)
+    print(f"Ficha generada: {ruta}")
+    display(HTML(ruta.read_text(encoding="utf-8")))
     return ruta
