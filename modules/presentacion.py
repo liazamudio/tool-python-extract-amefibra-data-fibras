@@ -39,12 +39,46 @@ def exportar_csv_emisoras(df_emisoras: pd.DataFrame, carpeta_salida: Path) -> Pa
     return ruta
 
 
-def mostrar_emisoras(df: pd.DataFrame, carpeta_salida: Path) -> pd.DataFrame:
-    """Extrae el listado de emisoras, lo muestra en pantalla y lo exporta a CSV en `carpeta_salida`."""
-    df_emisoras = df[["Emisora"]]
+def _buscar_csv_emisoras_mas_reciente(carpeta_salida: Path) -> Optional[Path]:
+    """Busca en `carpeta_salida` el CSV `*_list_of_tickers.csv` más reciente.
+
+    La fecha/hora que determina cuál es "el más reciente" es la incluida en el
+    propio nombre del archivo (prefijo `YYYYMMDD_HHMMSS_`), no la fecha de
+    modificación en disco, porque esta última no es confiable (copias, checkouts
+    de git, etc. la alteran sin que cambie el contenido).
+    """
+    if not carpeta_salida.exists():
+        return None
+    candidatos = sorted(carpeta_salida.glob("*_list_of_tickers.csv"))
+    return candidatos[-1] if candidatos else None
+
+
+def mostrar_emisoras(df: Optional[pd.DataFrame], carpeta_salida: Path) -> pd.DataFrame:
+    """Obtiene el listado de emisoras, lo muestra en pantalla y lo exporta a CSV en `carpeta_salida`.
+
+    Si `df` fue generado en la corrida actual (no es `None` ni está vacío), se usa
+    ese dato recién extraído de AMEFIBRA. Si no (porque las celdas de extracción no
+    se ejecutaron), se reutiliza el CSV `*_list_of_tickers.csv` más reciente ya
+    guardado en `carpeta_salida`, para no depender de repetir la extracción.
+    """
+    if df is not None and not df.empty:
+        print("Fuente de emisoras: extracción de AMEFIBRA de esta corrida.")
+        df_emisoras = df[["Emisora"]]
+        print(df_emisoras)
+        ruta = exportar_csv_emisoras(df_emisoras, carpeta_salida)
+        print(f"CSV de emisoras guardado en: {ruta}")
+        return df_emisoras
+
+    ruta_historico = _buscar_csv_emisoras_mas_reciente(carpeta_salida)
+    if ruta_historico is None:
+        raise FileNotFoundError(
+            "No hay un DataFrame `df` de esta corrida (¿no se ejecutaron las celdas de "
+            f"extracción de AMEFIBRA?) ni un CSV 'list_of_tickers' en {carpeta_salida}. "
+            "Corre la extracción de AMEFIBRA o coloca ahí un CSV histórico de emisoras."
+        )
+    print(f"Fuente de emisoras: histórico de {ruta_historico.name} (no se ejecutó la extracción de AMEFIBRA en esta corrida).")
+    df_emisoras = pd.read_csv(ruta_historico)[["Emisora"]]
     print(df_emisoras)
-    ruta = exportar_csv_emisoras(df_emisoras, carpeta_salida)
-    print(f"CSV de emisoras guardado en: {ruta}")
     return df_emisoras
 
 
