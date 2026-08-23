@@ -29,6 +29,25 @@ def exportar_csv_analitico(df: pd.DataFrame, carpeta_salida: Path) -> Path:
     return ruta
 
 
+def exportar_csv_emisoras(df_emisoras: pd.DataFrame, carpeta_salida: Path) -> Path:
+    """Exporta el listado de emisoras a un CSV dentro de `carpeta_salida`, con nombre con marca de tiempo."""
+    momento = datetime.now()
+    carpeta_salida.mkdir(parents=True, exist_ok=True)
+    nombre = f"{momento:%Y%m%d_%H%M%S}_list_of_tickers.csv"
+    ruta = carpeta_salida / nombre
+    df_emisoras.to_csv(ruta, index=False, encoding="utf-8")
+    return ruta
+
+
+def mostrar_emisoras(df: pd.DataFrame, carpeta_salida: Path) -> pd.DataFrame:
+    """Extrae el listado de emisoras, lo muestra en pantalla y lo exporta a CSV en `carpeta_salida`."""
+    df_emisoras = df[["Emisora"]]
+    print(df_emisoras)
+    ruta = exportar_csv_emisoras(df_emisoras, carpeta_salida)
+    print(f"CSV de emisoras guardado en: {ruta}")
+    return df_emisoras
+
+
 def exportar_csv_excel(df: pd.DataFrame, ruta: Path) -> Path:
     """Exporta `df` a un CSV compatible con Excel (con BOM, para tildes/ñ correctas)."""
     df.to_csv(ruta, index=False, encoding="utf-8-sig")
