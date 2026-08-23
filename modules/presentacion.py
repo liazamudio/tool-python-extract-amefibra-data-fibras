@@ -171,3 +171,23 @@ def seleccionar_anio_interactivo(años_disponibles: list[int], valor_simulado: O
     selector = widgets.Dropdown(options=años_disponibles, value=valor_inicial, description="Año:")
     display(selector)
     return selector
+
+
+def seleccionar_ticker_interactivo(emisoras: pd.Series, valor_simulado: Optional[str] = None) -> widgets.Dropdown:
+    """Despliega un dropdown para elegir, de los tickers listados en el Índice FIBRAS, cuál consultar.
+
+    Devuelve el widget: en uso interactivo, el usuario cambia la selección en el
+    notebook y una celda posterior lee `selector.value`. `valor_simulado` fija el
+    valor inicial del dropdown para pruebas automatizadas (donde no hay un usuario
+    real interactuando con el widget); si no es uno de los tickers listados, se
+    lanza un error claro en vez de continuar con un ticker inválido.
+    """
+    tickers_disponibles = sorted(emisoras.unique().tolist())
+    if not tickers_disponibles:
+        raise ValueError("No hay tickers disponibles para elegir.")
+    if valor_simulado is not None and valor_simulado not in tickers_disponibles:
+        raise ValueError(f"El ticker {valor_simulado!r} no está en el listado. Tickers válidos: {tickers_disponibles}.")
+    valor_inicial = valor_simulado if valor_simulado is not None else tickers_disponibles[0]
+    selector = widgets.Dropdown(options=tickers_disponibles, value=valor_inicial, description="Ticker:")
+    display(selector)
+    return selector
