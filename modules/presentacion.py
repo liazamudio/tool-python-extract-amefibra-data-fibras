@@ -158,6 +158,163 @@ body{{margin:0;background:#12201e;color:#e8ede9;font-family:Georgia,serif}}main{
     return ruta
 
 
+_MESES_ES = {
+    1: "enero", 2: "febrero", 3: "marzo", 4: "abril", 5: "mayo", 6: "junio",
+    7: "julio", 8: "agosto", 9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
+}
+_MESES_ABREV_ES = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"]
+
+
+def _fecha_larga_es(fecha: pd.Timestamp) -> str:
+    """Formatea una fecha como '07 de julio de 2025', sin depender del locale del sistema."""
+    return f"{fecha.day:02d} de {_MESES_ES[fecha.month]} de {fecha.year}"
+
+
+def crear_ficha_ejemplo_cliente(
+    ticker: str,
+    año: int,
+    carpeta_salida: Path,
+    historial: Optional[pd.DataFrame] = None,
+    capital_invertido: float = 10000.0,
+    marca: str = "ZAMUDIO INVESTORS",
+) -> Path:
+    """Calcula y exporta una ficha HTML de demostración, con datos reales de un ticker/año.
+
+    A diferencia de `crear_ficha_rendimiento` (que ya no se modifica), esta ficha usa
+    un diseño distinto pensado para mostrarle al cliente el aspecto del entregable
+    final: escenario de inversión con un capital de referencia, distribuciones
+    mensuales y rendimiento total en el año. Reutiliza las mismas fuentes de datos
+    (`obtener_distribuciones`, `_descargar_cierres_anuales`) que la ficha original,
+    en vez de duplicar la lógica de extracción.
+    """
+    if not isinstance(año, int) or año < 1900 or año > 2100:
+        raise ValueError("El año debe ser un entero entre 1900 y 2100.")
+    if capital_invertido <= 0:
+        raise ValueError("El capital invertido debe ser positivo.")
+    ticker_base = _normalizar_ticker(ticker)
+    historial = historial if historial is not None else obtener_distribuciones(ticker_base, carpeta_salida)
+    requerido = {"ticker", "ex_date", "amount_mxn"}
+    faltantes = requerido.difference(historial.columns)
+    if faltantes:
+        raise ValueError(f"Faltan columnas en el historial: {sorted(faltantes)}")
+
+    pagos = historial.copy()
+    pagos["ex_date"] = pd.to_datetime(pagos["ex_date"], errors="coerce")
+    pagos["amount_mxn"] = pd.to_numeric(pagos["amount_mxn"], errors="coerce")
+    pagos = pagos[
+        (pagos["ticker"].astype(str).str.upper() == ticker_base)
+        & (pagos["ex_date"].dt.year == año)
+        & pagos["amount_mxn"].notna()
+    ]
+
+    cierres = _descargar_cierres_anuales(f"{ticker_base}.MX", año)
+    precio_compra = float(cierres.iloc[0])
+    precio_actual = float(cierres.iloc[-1])
+    fecha_inicial = cierres.index[0]
+    fecha_final = cierres.index[-1]
+
+    titulos = int(capital_invertido // precio_compra)
+    plusvalia = titulos * (precio_actual - precio_compra)
+    dividendo_por_titulo = float(pagos["amount_mxn"].sum())
+    distribuciones_totales = titulos * dividendo_por_titulo
+    retorno_total = plusvalia + distribuciones_totales
+    rendimiento_total_pct = retorno_total / capital_invertido * 100
+
+    pagos_por_mes = pagos.groupby(pagos["ex_date"].dt.month)["amount_mxn"].sum()
+    valores_mensuales = [float(pagos_por_mes.get(mes, 0.0)) for mes in range(1, 13)]
+    max_mensual = max(max(valores_mensuales), 0.000001)
+    barras_html = "".join(
+        f'<div class="bar-col"><div class="bar-fill" style="height:{valor / max_mensual * 100:.1f}%"></div>'
+        f'<span class="bar-label">{etiqueta}</span></div>'
+        for etiqueta, valor in zip(_MESES_ABREV_ES, valores_mensuales)
+    )
+
+    signo = "+" if rendimiento_total_pct >= 0 else ""
+    color_rendimiento = "#c0503c" if rendimiento_total_pct < 0 else "#2f8f6f"
+
+    html = f"""<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Ficha de ejemplo {escape(ticker_base)} {año}</title>
+<style>
+body{{margin:0;background:#f4f6f5;font-family:'Segoe UI',Arial,sans-serif;color:#25332e}}
+.card{{max-width:480px;margin:24px auto;background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 6px 18px #00000022;color:#1c2a25}}
+.header{{background:#2f5d50;color:#fff;text-align:center;padding:22px 16px}}
+.header h1{{margin:0;font-size:22px;letter-spacing:1px}}
+.header .subtitle{{margin-top:4px;font-size:13px;color:#cfe3da}}
+.section{{padding:18px 22px}}
+.scenario{{display:flex;gap:14px;align-items:stretch}}
+.scenario p{{flex:1;font-size:13px;line-height:1.5;margin:0;color:#1c2a25}}
+.price-boxes{{flex:1;display:flex;flex-direction:column;gap:4px}}
+.price-box{{border:1px solid #d8e3df;border-radius:8px;padding:8px;text-align:center}}
+.price-box .label{{font-size:10px;text-transform:uppercase;color:#55675f;display:block}}
+.price-box .value{{font-size:15px;font-weight:600;margin-top:4px;color:#1c2a25}}
+.arrow{{text-align:center;font-size:16px;color:#2f5d50}}
+.period-note{{font-size:11px;color:#55675f;font-style:italic;margin-top:10px}}
+h2.section-title{{font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:#3a6b5e;border-bottom:1px solid #e3ece8;padding-bottom:6px;margin:0 0 12px}}
+.dist-grid{{display:flex;gap:16px;align-items:flex-end}}
+.dist-values{{flex:0 0 130px}}
+.dist-values .big{{font-size:19px;font-weight:700;color:#2f5d50}}
+.dist-values .caption{{font-size:11px;color:#55675f;margin:2px 0 10px}}
+.chart{{flex:1;display:flex;align-items:flex-end;gap:4px;height:70px}}
+.bar-col{{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}}
+.bar-fill{{width:70%;background:#3a8f78;border-radius:2px 2px 0 0;min-height:2px}}
+.bar-label{{font-size:8px;color:#5c6b65;margin-top:3px}}
+table.resumen{{width:100%;border-collapse:collapse;margin-top:14px;font-size:13px}}
+table.resumen td{{padding:8px 10px;color:#1c2a25}}
+table.resumen tr.plusvalia-row td{{background:#eef4f1}}
+table.resumen tr.dist-row td{{background:#f7faf8}}
+table.resumen td.valor{{text-align:right;font-weight:600}}
+.retorno{{text-align:center;font-size:13px;color:#3a6b5e;margin-top:10px}}
+.retorno strong{{font-size:15px}}
+.rendimiento{{text-align:center;padding:18px 0 8px}}
+.rendimiento .label{{font-size:12px;color:#55675f}}
+.rendimiento .value{{font-size:34px;font-weight:700;color:{color_rendimiento}}}
+.disclaimer{{font-size:9px;color:#5c6b65;text-align:center;padding:0 22px 12px;line-height:1.4}}
+.footer{{background:#22463c;color:#fff;text-align:center;padding:12px;font-size:12px;letter-spacing:2px}}
+</style></head>
+<body><div class="card">
+<div class="header"><h1>{escape(ticker_base)}</h1><div class="subtitle">Desempeño en 12 meses</div></div>
+<div class="section">
+<div class="scenario">
+<p>Supongamos que hace un año invertiste ${capital_invertido:,.0f}; con ese monto pudiste adquirir {titulos} títulos.</p>
+<div class="price-boxes">
+<div class="price-box"><span class="label">Precio de compra</span><div class="value">${precio_compra:,.2f}</div></div>
+<div class="arrow">&#8595;</div>
+<div class="price-box"><span class="label">Precio actual</span><div class="value">${precio_actual:,.2f}</div></div>
+</div>
+</div>
+<div class="period-note">Periodo de análisis: {_fecha_larga_es(fecha_inicial)} – {_fecha_larga_es(fecha_final)}</div>
+</div>
+<div class="section">
+<h2 class="section-title">Distribuciones en el año</h2>
+<div class="dist-grid">
+<div class="dist-values">
+<div class="big">${dividendo_por_titulo:,.4f}</div><div class="caption">(por título)</div>
+<div class="big">${distribuciones_totales:,.2f}</div><div class="caption">(por los {titulos} títulos)</div>
+</div>
+<div class="chart">{barras_html}</div>
+</div>
+</div>
+<div class="section">
+<table class="resumen">
+<tr class="plusvalia-row"><td>Plusvalía</td><td class="valor">${plusvalia:,.2f}</td></tr>
+<tr class="dist-row"><td>Distribuciones</td><td class="valor">${distribuciones_totales:,.2f}</td></tr>
+</table>
+<div class="retorno">Retorno total: <strong>${retorno_total:,.2f}</strong></div>
+</div>
+<div class="rendimiento">
+<div class="label">Rendimiento total en 1 año</div>
+<div class="value">{signo}{rendimiento_total_pct:,.2f}%</div>
+</div>
+<div class="disclaimer">Material exclusivo para uso con fines educativos e ilustrativos.<br>No constituye recomendaciones de inversión ni ofertas de compra o venta de activos financieros.<br>Rendimientos pasados no garantizan rendimientos futuros.</div>
+<div class="footer">{escape(marca)}</div>
+</div></body></html>"""
+    carpeta_salida.mkdir(parents=True, exist_ok=True)
+    momento = datetime.now()
+    ruta = carpeta_salida / f"{momento:%Y%m%d_%H%M%S}_{ticker_base}_{año}_ficha_ejemplo_cliente.html"
+    ruta.write_text(html, encoding="utf-8")
+    return ruta
+
+
 def ejecutar_extraccion_indice(
     headless: bool,
     timeout_datos_ms: int,
@@ -202,6 +359,21 @@ def mostrar_ficha_rendimiento(
     """Genera la ficha de rendimiento con `crear_ficha_rendimiento` y la muestra en el notebook."""
     ruta = crear_ficha_rendimiento(ticker, año, carpeta_salida, historial)
     print(f"Ficha generada: {ruta}")
+    display(HTML(ruta.read_text(encoding="utf-8")))
+    return ruta
+
+
+def mostrar_ficha_ejemplo_cliente(
+    ticker: str,
+    año: int,
+    carpeta_salida: Path,
+    historial: Optional[pd.DataFrame] = None,
+    capital_invertido: float = 10000.0,
+    marca: str = "ZAMUDIO INVESTORS",
+) -> Path:
+    """Genera la ficha de ejemplo para cliente con `crear_ficha_ejemplo_cliente` y la muestra en el notebook."""
+    ruta = crear_ficha_ejemplo_cliente(ticker, año, carpeta_salida, historial, capital_invertido, marca)
+    print(f"Ficha de ejemplo generada: {ruta}")
     display(HTML(ruta.read_text(encoding="utf-8")))
     return ruta
 
