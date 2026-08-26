@@ -22,6 +22,85 @@ from .extraccion import (
 from .procesamiento import _normalizar_ticker, normalizar_para_analisis
 
 
+def aplicar_tema_oscuro_notebook() -> None:
+    """Inyecta un fondo oscuro para las celdas, el markdown y las salidas del notebook.
+
+    Es un `<style>` inyectado vía `IPython.display.HTML`, así que solo tiene efecto
+    en entornos donde las celdas comparten un mismo documento HTML (Jupyter
+    clásico, JupyterLab, o al exportar el notebook a HTML): ahí sí oscurece todas
+    las celdas y salidas, aunque el propio Jupyter recargue su tema. En el
+    notebook de VS Code, en cambio, cada salida de celda se renderiza en un
+    iframe aislado del resto de la interfaz (otras celdas, markdown, cromo de la
+    UI), así que este `<style>` no logra salir de su propia salida; para un
+    fondo oscuro real en VS Code hay que cambiar el tema del editor
+    (`Ver > Paleta de comandos > Preferencias: Cambiar tema de color`).
+    """
+    display(HTML("""<style>
+/* JupyterLab (y el HTML exportado con nbconvert) define sus colores como variables
+   CSS en :root; redefinirlas aquí es lo que de verdad oscurece cada celda, el
+   markdown y las salidas, en vez de pelear clase por clase contra las reglas ya
+   definidas (que las consumen vía var(...) y suelen ganar por especificidad). */
+:root {
+    --jp-layout-color0: #1e1e1e !important;
+    --jp-layout-color1: #1e1e1e !important;
+    --jp-layout-color2: #3c3c3c !important;
+    --jp-layout-color3: #4d4d4d !important;
+    --jp-layout-color4: #6e6e6e !important;
+    --jp-cell-editor-background: #252526 !important;
+    --jp-cell-editor-background-color: #252526 !important;
+    --jp-content-font-color0: #ffffff !important;
+    --jp-content-font-color1: #d4d4d4 !important;
+    --jp-content-font-color2: #a0a0a0 !important;
+    --jp-content-font-color3: #6e6e6e !important;
+    --jp-ui-font-color0: #ffffff !important;
+    --jp-ui-font-color1: #d4d4d4 !important;
+    --jp-ui-font-color2: #a0a0a0 !important;
+    --jp-ui-font-color3: #6e6e6e !important;
+    --jp-border-color0: #3c3c3c !important;
+    --jp-border-color1: #3c3c3c !important;
+    --jp-border-color2: #3c3c3c !important;
+    --jp-border-color3: #3c3c3c !important;
+    --jp-inverse-layout-color0: #ffffff !important;
+    /* Filas alternadas de tablas (p. ej. display(df)) y fondo de errores/avisos. */
+    --jp-rendermime-table-row-background: #2a2a2a !important;
+    --jp-rendermime-table-row-hover-background: #37373d !important;
+    --jp-rendermime-error-background: #4b1d1d !important;
+    /* Resaltado de sintaxis del código (Pygments/CodeMirror), tipo VS Code Dark+. */
+    --jp-mirror-editor-variable-color: #d4d4d4 !important;
+    --jp-mirror-editor-keyword-color: #569cd6 !important;
+    --jp-mirror-editor-string-color: #ce9178 !important;
+    --jp-mirror-editor-comment-color: #6a9955 !important;
+    --jp-mirror-editor-number-color: #b5cea8 !important;
+    --jp-mirror-editor-operator-color: #d4d4d4 !important;
+    --jp-mirror-editor-punctuation-color: #d4d4d4 !important;
+    --jp-mirror-editor-bracket-color: #d4d4d4 !important;
+    --jp-mirror-editor-def-color: #dcdcaa !important;
+    --jp-mirror-editor-builtin-color: #4ec9b0 !important;
+    --jp-mirror-editor-attribute-color: #9cdcfe !important;
+    --jp-mirror-editor-property-color: #9cdcfe !important;
+    --jp-mirror-editor-atom-color: #569cd6 !important;
+    --jp-mirror-editor-meta-color: #d4d4d4 !important;
+    --jp-mirror-editor-qualifier-color: #d4d4d4 !important;
+    --jp-mirror-editor-tag-color: #569cd6 !important;
+    --jp-mirror-editor-link-color: #9cdcfe !important;
+    --jp-mirror-editor-error-color: #f48771 !important;
+    --jp-mirror-editor-hr-color: #6e6e6e !important;
+    --jp-mirror-editor-header-color: #569cd6 !important;
+}
+body, html { background: #1e1e1e !important; }
+/* Clases de Jupyter clásico (nbclassic/notebook), que no usan estas variables. */
+#notebook, #notebook-container, .cell, .input_area, .output_area,
+.text_cell_render, .rendered_html, .CodeMirror {
+    background: #1e1e1e !important;
+    color: #d4d4d4 !important;
+    border-color: #3c3c3c !important;
+}
+a, .rendered_html a, .jp-RenderedHTMLCommon a {
+    color: #4fc1ff !important;
+}
+</style>"""))
+
+
 def exportar_csv_analitico(df: pd.DataFrame, carpeta_salida: Path) -> Path:
     """Normaliza `df` para análisis y lo exporta a un CSV "profesional" dentro de `carpeta_salida`."""
     momento = datetime.now()
@@ -282,7 +361,7 @@ h2.section-title{{font-size:13px;text-transform:uppercase;letter-spacing:.5px;co
 table.detalle{{width:100%;border-collapse:collapse;margin-top:10px;font-size:12px}}
 table.detalle th{{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.3px;color:#55675f;padding:6px 8px;border-bottom:1px solid #d8e3df}}
 table.detalle th.num{{text-align:right}}
-table.detalle td{{padding:7px 8px;color:#1c2a25;border-bottom:1px solid #eef2f0}}
+table.detalle td{{padding:7px 8px;color:#1c2a25;background:#ffffff;border-bottom:1px solid #eef2f0}}
 table.detalle td.num{{text-align:right;font-variant-numeric:tabular-nums}}
 table.detalle tr:last-child td{{border-bottom:none}}
 table.detalle tbody tr:nth-child(even) td{{background:#f7faf8}}
