@@ -229,8 +229,8 @@ def crear_ficha_ejemplo_cliente(
     retorno_total = plusvalia + distribuciones_totales
     rendimiento_total_pct = retorno_total / capital_invertido * 100
 
-    pagos_por_mes = pagos.groupby(pagos["ex_date"].dt.month)["amount_mxn"].sum()
-    valores_mensuales = [float(pagos_por_mes.get(mes, 0.0)) for mes in range(1, 13)]
+    pagos_por_mes = pagos.groupby(pagos["ex_date"].dt.month)["amount_mxn"].sum().reindex(range(1, 13), fill_value=0.0)
+    valores_mensuales = pagos_por_mes.tolist()
     max_mensual = max(max(valores_mensuales), 0.000001)
     barras_html = "".join(
         f'<div class="bar-col"><div class="bar-fill" style="height:{valor / max_mensual * 100:.1f}%"></div>'
@@ -454,10 +454,12 @@ def exportar_ficha_a_pdf(
     def _generar_pdf() -> None:
         with sync_playwright() as playwright:
             navegador = playwright.chromium.launch()
-            pagina = navegador.new_page()
-            pagina.goto(ruta_html.resolve().as_uri())
-            pagina.pdf(path=str(ruta_pdf), format="Letter", print_background=True)
-            navegador.close()
+            try:
+                pagina = navegador.new_page()
+                pagina.goto(ruta_html.resolve().as_uri())
+                pagina.pdf(path=str(ruta_pdf), format="Letter", print_background=True)
+            finally:
+                navegador.close()
 
     ejecutar_con_playwright_sync(_generar_pdf)
     return ruta_pdf

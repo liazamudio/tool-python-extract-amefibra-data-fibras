@@ -1,6 +1,6 @@
 # AMEFIBRA Índice FIBRAS — Notebook de extracción y análisis
 
-Notebook de Jupyter (con su equivalente en script `.py`) que extrae el Índice FIBRAS de AMEFIBRA en tiempo real, consulta el listado de emisoras, descarga el historial de dividendos de cada FIBRA vía `yfinance` y genera una ficha de rendimiento anual (dividendos + variación de capital) por ticker.
+Notebook de Jupyter (con su equivalente en script `.py`) que extrae el Índice FIBRAS de AMEFIBRA en tiempo real, consulta el listado de emisoras, descarga el historial de dividendos de cada FIBRA vía `yfinance`, genera una ficha de rendimiento anual (dividendos + variación de capital) y una ficha de demostración para cliente por ticker, y exporta ambas a PDF con nombre de archivo estandarizado.
 
 <!-- COMPLETAR: agregar un GIF o captura de pantalla mostrando una corrida del notebook (tabla del índice, selector de ticker/año y la ficha HTML de rendimiento). No se pudo generar automáticamente porque requiere una grabación de pantalla. -->
 
@@ -22,7 +22,7 @@ Además, ninguna fuente pública ofrece una API homogénea y gratuita de histori
 - **Datos de mercado/dividendos:** [yfinance](https://pypi.org/project/yfinance/) — historial de distribuciones y cierres diarios de cada FIBRA (tickers `.MX`)
 - **Procesamiento de datos:** [pandas](https://pandas.pydata.org/) + [lxml](https://lxml.de/) (parseo de la tabla HTML renderizada)
 - **Widgets interactivos:** [ipywidgets](https://ipywidgets.readthedocs.io/) — selectores de ticker y año dentro del notebook
-- **Exportación:** [openpyxl](https://openpyxl.readthedocs.io/) (Excel `.xlsx`), CSV nativo de pandas, HTML para la ficha de rendimiento
+- **Exportación:** [openpyxl](https://openpyxl.readthedocs.io/) (Excel `.xlsx`), CSV nativo de pandas, HTML para las fichas y PDF (vía `page.pdf()` de Playwright, reutilizando el mismo Chromium headless ya usado para el scraping, sin dependencias adicionales)
 - **Base de datos:** No aplica — el notebook no persiste datos en una BD, solo exporta a archivos locales en `output/`
 - **Infraestructura/Deploy:** No aplica — notebook/script de ejecución local, sin pipeline de CI/CD ni despliegue configurado en el repositorio
 
@@ -36,6 +36,9 @@ Además, ninguna fuente pública ofrece una API homogénea y gratuita de histori
 - Selectores interactivos (`ipywidgets`) para elegir, del listado de emisoras ya extraído, qué ticker y qué año consultar
 - Descarga y valida el historial de dividendos de la FIBRA elegida (fecha ex-dividendo, monto, rendimiento y rendimiento anualizado), archivado también en `output/`
 - Genera una ficha HTML de rendimiento total por año calendario (dividendos + variación de capital vs. precio inicial/final), guardada en `output/`
+- Genera además una ficha de ejemplo para cliente con un diseño de demostración distinto (escenario de inversión sobre un capital de referencia, gráfica de distribuciones mensuales, tabla de detalle fecha/monto/rendimiento y rendimiento total destacado), pensada para mostrar el aspecto del entregable final
+- Exporta ambas fichas a PDF en `output/fichas/`, con nombre de archivo estandarizado (`AAAA-MM-DD_HHMM_TICKER_descripcion-breve_periodo.pdf`) que permite identificarlas y ordenarlas cronológicamente sin abrirlas
+- Cachea en memoria los cierres anuales de años ya cerrados, para no volver a descargar de Yahoo Finance los mismos precios cuando se generan varias fichas del mismo ticker/año en una misma corrida (el año en curso nunca se cachea, porque sus cierres siguen cambiando)
 - Exporta opcionalmente el índice completo a CSV compatible con Excel (`utf-8-sig`) y/o XLSX
 - Solo lee información pública ya publicada en las páginas/fuentes consultadas, sin credenciales ni endpoints privados
 
@@ -49,8 +52,9 @@ tool-python-extract-amefibra-data-fibras/
 │   ├── __init__.py
 │   ├── extraccion.py              # Scraping del índice (Playwright) y descarga de dividendos/precios (yfinance)
 │   ├── procesamiento.py           # Normalización y transformación de los DataFrames (snake_case, tipos, periodicidad)
-│   └── presentacion.py            # Despliegue en notebook y exportación a CSV/XLSX/HTML, selectores interactivos
+│   └── presentacion.py            # Despliegue en notebook, fichas HTML/PDF y exportación a CSV/XLSX, selectores interactivos
 ├── output/                        # Generado en cada corrida (CSV/XLSX/HTML); no versionado, ver .gitignore
+│   └── fichas/                    # PDFs exportados de las fichas, con nombre de archivo estandarizado
 ├── requirements.txt                # Dependencias de Python
 ├── LICENSE
 └── README.md
@@ -94,8 +98,9 @@ Abre `amefibra-indice-fibras.ipynb` en VS Code (extensión Jupyter) o Jupyter La
 4. **Consulta de emisoras** — si no quieres esperar la extracción en vivo, puedes saltarte el paso 3 y correr directo esta celda: reutiliza automáticamente el `list_of_tickers` más reciente de `output/`.
 5. **Selector de ticker** — despliega un dropdown con las emisoras disponibles; cambia la selección y corre la celda siguiente para descargar su historial de dividendos.
 6. **Selector de año** — despliega un dropdown con los años que tienen distribuciones para el ticker elegido; cambia la selección y corre la celda siguiente para generar la ficha de rendimiento de ese año.
+7. **Ficha de rendimiento anual** y **ficha de ejemplo para cliente** — cada una se genera en HTML, se muestra directamente en el notebook y se exporta a PDF en `output/fichas/` (ruta impresa en pantalla), usando el mismo ticker y año ya elegidos arriba.
 
-Cada corrida relevante queda archivada en `output/` (CSV del índice, CSV de emisoras, CSV de dividendos y ficha HTML de rendimiento), con nombre `AAAAMMDD_HHMMSS_descripción` para no sobrescribir corridas anteriores.
+Cada corrida relevante queda archivada en `output/` (CSV del índice, CSV de emisoras, CSV de dividendos y las fichas HTML de rendimiento y de ejemplo para cliente) y en `output/fichas/` (los PDF de ambas fichas), con nombre `AAAAMMDD_HHMMSS_descripción` (HTML/CSV) o `AAAA-MM-DD_HHMM_TICKER_descripcion-breve_periodo` (PDF) para no sobrescribir corridas anteriores.
 
 ### Alternativa: `amefibra-indice-fibras.py`
 
@@ -132,12 +137,14 @@ venv/Scripts/python.exe -m pip install -r requirements.txt
 - **`yfinance` para dividendos:** ninguna fuente primaria (BMV/BIVA, relación con inversionistas de cada emisor, AMEFIBRA) expone una API homogénea y gratuita de historial de distribuciones; `yfinance` es un cliente no oficial de Yahoo Finance, gratuito y sin API key, a costa de no garantizar fecha de registro, fecha de pago ni componentes fiscales.
 - **Fallback al CSV histórico de emisoras:** la extracción en vivo del índice (Playwright) es la parte más lenta del flujo; si ya existe una corrida reciente archivada en `output/`, la consulta de emisoras la reutiliza en vez de forzar una nueva extracción, e indica en pantalla cuál de las dos fuentes usó.
 - **Nombres de archivo `AAAAMMDD_HHMMSS_descripción`:** el prefijo de fecha/hora (formato ordenable lexicográficamente) permite listar `output/` y ver las corridas en orden cronológico sin depender de la metadata del sistema de archivos, y evita que corridas repetidas se sobrescriban entre sí.
+- **PDF vía Playwright en vez de una librería nueva:** para exportar las fichas a PDF se reutiliza `page.pdf()` del mismo Chromium headless que ya usa el scraping del índice, en vez de agregar una dependencia adicional (p. ej. weasyprint o un binario externo como wkhtmltopdf). El nombre del PDF (`AAAA-MM-DD_HHMM_TICKER_descripcion-breve_periodo.pdf`) toma la fecha/hora del propio nombre del HTML de origen —el momento en que se consultaron los datos—, no el momento de la exportación ni la fecha de modificación en disco (que, igual que en el resto del proyecto, no es confiable).
+- **Cierres anuales cacheados solo para años cerrados:** la ficha de rendimiento y la ficha de ejemplo para cliente consultan, segundos aparte, los mismos cierres del mismo ticker/año; cachear esa descarga en memoria evita duplicarla. El año en curso queda deliberadamente fuera del cache porque sus cierres cambian mientras avanza el año (el último cierre disponible es el "precio actual" de la ficha).
 
 <!-- COMPLETAR: agregar trade-offs adicionales que solo el autor conoce, por ejemplo: por qué Playwright y no Selenium/Puppeteer, por qué lanzar un navegador nuevo por ejecución en vez de mantener una sesión persistente, o por qué no se cachean/persisten los datos entre corridas más allá del historial en output/. No se pudo inferir del código porque no hay comentarios ni commits que lo documenten. -->
 
 ## Estado del proyecto
 
-Activo en proceso de desarrollo — historial de git con 17 commits hasta la fecha, actividad reciente centrada en migrar el script original a un notebook con `modules/` reutilizables, agregar la consulta de dividendos/ficha de rendimiento y el fallback de emisoras sin depender de AMEFIBRA.
+Activo en proceso de desarrollo — historial de git con 21 commits hasta la fecha, actividad reciente centrada en migrar el script original a un notebook con `modules/` reutilizables, agregar la consulta de dividendos/ficha de rendimiento, el fallback de emisoras sin depender de AMEFIBRA, la ficha de ejemplo para cliente y la exportación de ambas fichas a PDF.
 
 ## Autor / Rol
 

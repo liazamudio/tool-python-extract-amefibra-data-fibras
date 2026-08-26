@@ -7,6 +7,7 @@ dividendos/precios históricos de cada FIBRA (vía Yahoo Finance / yfinance).
 
 import asyncio
 import concurrent.futures
+import functools
 import io
 import re
 import sys
@@ -150,6 +151,25 @@ def _descargar_con_reintentos(ticker_yahoo: str, intentos: int = 3, espera_s: fl
 
 
 def _descargar_cierres_anuales(ticker_yahoo: str, año: int) -> pd.Series:
+    """Cierres diarios de `ticker_yahoo` en el año calendario `año`.
+
+    Los años ya cerrados (anteriores al actual) se cachean en memoria: dos fichas
+    consecutivas del mismo ticker/año (p. ej. la ficha de rendimiento y la ficha
+    de ejemplo para cliente) no vuelven a descargar los mismos precios de Yahoo
+    Finance. El año en curso nunca se cachea, porque sus cierres cambian mientras
+    avanza el año (el último cierre disponible es el "precio actual").
+    """
+    if año >= datetime.now().year:
+        return _descargar_cierres_anuales_sin_cachear(ticker_yahoo, año)
+    return _descargar_cierres_anuales_cacheado(ticker_yahoo, año).copy()
+
+
+@functools.lru_cache(maxsize=64)
+def _descargar_cierres_anuales_cacheado(ticker_yahoo: str, año: int) -> pd.Series:
+    return _descargar_cierres_anuales_sin_cachear(ticker_yahoo, año)
+
+
+def _descargar_cierres_anuales_sin_cachear(ticker_yahoo: str, año: int) -> pd.Series:
     inicio = pd.Timestamp(year=año, month=1, day=1)
     fin = pd.Timestamp(year=año + 1, month=1, day=1)
     precios = yf.download(
