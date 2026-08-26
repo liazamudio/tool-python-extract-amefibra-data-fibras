@@ -1,5 +1,6 @@
-"""Funciones de presentación y exportación de resultados de FIBRAs (CSV, Excel, fichas HTML)."""
+"""Funciones de presentación y exportación de resultados de FIBRAs (CSV, Excel, fichas HTML/PDF)."""
 
+import re
 from datetime import datetime
 from html import escape
 from pathlib import Path
@@ -8,11 +9,13 @@ from typing import Optional
 import ipywidgets as widgets
 import pandas as pd
 from IPython.display import HTML, display
+from playwright.sync_api import sync_playwright
 
 from .extraccion import (
     COLUMNAS_DISTRIBUCIONES,
     URL_PAGINA,
     _descargar_cierres_anuales,
+    ejecutar_con_playwright_sync,
     obtener_distribuciones,
     obtener_tabla_fibras_en_notebook,
 )
@@ -405,6 +408,59 @@ def mostrar_ficha_ejemplo_cliente(
     print(f"Ficha de ejemplo generada: {ruta}")
     display(HTML(ruta.read_text(encoding="utf-8")))
     return ruta
+
+
+_PATRON_TIMESTAMP_FICHA = re.compile(r"^(\d{8})_(\d{6})_")
+
+
+def exportar_ficha_a_pdf(
+    ruta_html: Path,
+    ticker: str,
+    descripcion: str,
+    periodo: str,
+    carpeta_salida: Path,
+) -> Path:
+    """Exporta a PDF una ficha HTML ya generada (por `crear_ficha_rendimiento` o
+    `crear_ficha_ejemplo_cliente`), con un nombre de archivo estandarizado:
+    `AAAA-MM-DD_HHMM_TICKER_descripcion-breve_periodo.pdf`.
+
+    La fecha/hora del nombre se toma del propio nombre de `ruta_html` (prefijo
+    `YYYYMMDD_HHMMSS_` que ya generan ambas funciones de ficha), es decir, el
+    momento en que se consultaron los datos, no el momento de esta exportación ni
+    la fecha de modificación en disco del archivo (que, como en el resto del
+    proyecto, no es confiable). `descripcion` debe tener como máximo cuatro
+    palabras; se normaliza a minúsculas separadas por guiones (p. ej.
+    "rendimiento anual" -> "rendimiento-anual"). Si ya existe un PDF con el mismo
+    nombre, se sobrescribe.
+    """
+    coincidencia = _PATRON_TIMESTAMP_FICHA.match(ruta_html.name)
+    if not coincidencia:
+        raise ValueError(
+            f"'{ruta_html.name}' no tiene el prefijo de fecha/hora esperado (YYYYMMDD_HHMMSS_)."
+        )
+    momento = datetime.strptime(coincidencia.group(1) + coincidencia.group(2), "%Y%m%d%H%M%S")
+
+    palabras = str(descripcion).strip().lower().split()
+    if not palabras:
+        raise ValueError("La descripción breve no puede estar vacía.")
+    if len(palabras) > 4:
+        raise ValueError("La descripción breve debe tener máximo cuatro palabras.")
+    descripcion_normalizada = "-".join(palabras)
+
+    ticker_base = _normalizar_ticker(ticker)
+    carpeta_salida.mkdir(parents=True, exist_ok=True)
+    ruta_pdf = carpeta_salida / f"{momento:%Y-%m-%d_%H%M}_{ticker_base}_{descripcion_normalizada}_{periodo}.pdf"
+
+    def _generar_pdf() -> None:
+        with sync_playwright() as playwright:
+            navegador = playwright.chromium.launch()
+            pagina = navegador.new_page()
+            pagina.goto(ruta_html.resolve().as_uri())
+            pagina.pdf(path=str(ruta_pdf), format="Letter", print_background=True)
+            navegador.close()
+
+    ejecutar_con_playwright_sync(_generar_pdf)
+    return ruta_pdf
 
 
 def seleccionar_anio_interactivo(años_disponibles: list[int], valor_simulado: Optional[int] = None) -> widgets.Dropdown:

@@ -14,7 +14,7 @@ import time
 import warnings
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional, TypeVar
 
 import pandas as pd
 import yfinance as yf
@@ -99,8 +99,11 @@ def obtener_tabla_fibras(headless: bool = True, timeout_datos_ms: int = 30000) -
     return df.dropna(axis=1, how="all")
 
 
-def obtener_tabla_fibras_en_notebook(headless: bool = True, timeout_datos_ms: int = 30000) -> pd.DataFrame:
-    """Como `obtener_tabla_fibras`, pero segura de llamar desde un notebook de Jupyter.
+_T = TypeVar("_T")
+
+
+def ejecutar_con_playwright_sync(tarea: Callable[[], _T]) -> _T:
+    """Ejecuta `tarea` (que usa la API síncrona de Playwright) de forma segura desde un notebook de Jupyter.
 
     El kernel de Jupyter ya corre un event loop de asyncio, y la API síncrona de
     Playwright no admite ejecutarse dentro de uno (lanza Error), así que se
@@ -116,15 +119,22 @@ def obtener_tabla_fibras_en_notebook(headless: bool = True, timeout_datos_ms: in
     exponer alternativa).
     """
 
-    def _tarea():
+    def _tarea_en_hilo():
         if sys.platform == "win32":
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", DeprecationWarning)
                 asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-        return obtener_tabla_fibras(headless=headless, timeout_datos_ms=timeout_datos_ms)
+        return tarea()
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        return executor.submit(_tarea).result()
+        return executor.submit(_tarea_en_hilo).result()
+
+
+def obtener_tabla_fibras_en_notebook(headless: bool = True, timeout_datos_ms: int = 30000) -> pd.DataFrame:
+    """Como `obtener_tabla_fibras`, pero segura de llamar desde un notebook de Jupyter (ver `ejecutar_con_playwright_sync`)."""
+    return ejecutar_con_playwright_sync(
+        lambda: obtener_tabla_fibras(headless=headless, timeout_datos_ms=timeout_datos_ms)
+    )
 
 
 def _descargar_con_reintentos(ticker_yahoo: str, intentos: int = 3, espera_s: float = 2.0):
