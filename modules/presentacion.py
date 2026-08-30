@@ -257,7 +257,7 @@ def _fecha_corta_es(fecha: pd.Timestamp) -> str:
     return f"{fecha.day:02d} {_MESES_ABREV_ES[fecha.month - 1].capitalize()} {fecha.year}"
 
 
-def crear_ficha_ejemplo_cliente(
+def crear_ficha_completa_cliente(
     ticker: str,
     año: int,
     carpeta_salida: Path,
@@ -265,15 +265,15 @@ def crear_ficha_ejemplo_cliente(
     capital_invertido: float = 10000.0,
     marca: str = "ZAMUDIO INVESTORS",
 ) -> Path:
-    """Calcula y exporta una ficha HTML de demostración, con datos reales de un ticker/año.
+    """Calcula y exporta la ficha HTML completa anual para el cliente, con datos reales de un ticker/año.
 
     A diferencia de `crear_ficha_rendimiento` (que ya no se modifica), esta ficha usa
-    un diseño distinto pensado para mostrarle al cliente el aspecto del entregable
-    final: escenario de inversión con un capital de referencia, distribuciones
-    mensuales, el historial detallado de pagos (fecha, monto y rendimiento) y el
-    rendimiento total en el año. Reutiliza las mismas fuentes de datos
-    (`obtener_distribuciones`, `_descargar_cierres_anuales`) que la ficha original,
-    en vez de duplicar la lógica de extracción.
+    un diseño distinto pensado como entregable final para el cliente: escenario de
+    inversión con un capital de referencia, distribuciones mensuales, el historial
+    detallado de pagos (fecha, monto y rendimiento) y el rendimiento total en el
+    año. Reutiliza las mismas fuentes de datos (`obtener_distribuciones`,
+    `_descargar_cierres_anuales`) que la ficha de rendimiento, en vez de duplicar
+    la lógica de extracción.
     """
     if not isinstance(año, int) or año < 1900 or año > 2100:
         raise ValueError("El año debe ser un entero entre 1900 y 2100.")
@@ -333,7 +333,7 @@ def crear_ficha_ejemplo_cliente(
     color_rendimiento = "#c0503c" if rendimiento_total_pct < 0 else "#2f8f6f"
 
     html = f"""<!doctype html>
-<html lang="es"><head><meta charset="utf-8"><title>Ficha de ejemplo {escape(ticker_base)} {año}</title>
+<html lang="es"><head><meta charset="utf-8"><title>Ficha completa {escape(ticker_base)} {año}</title>
 <style>
 body{{margin:0;background:#f4f6f5;font-family:'Segoe UI',Arial,sans-serif;color:#25332e}}
 .card{{max-width:480px;margin:24px auto;background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 6px 18px #00000022;color:#1c2a25}}
@@ -379,7 +379,7 @@ table.resumen td.valor{{text-align:right;font-weight:600}}
 .footer{{background:#22463c;color:#fff;text-align:center;padding:12px;font-size:12px;letter-spacing:2px}}
 </style></head>
 <body><div class="card">
-<div class="header"><h1>{escape(ticker_base)}</h1><div class="subtitle">Desempeño en 12 meses</div></div>
+<div class="header"><h1>{escape(ticker_base)}</h1><div class="subtitle">{año} · Desempeño en 12 meses</div></div>
 <div class="section">
 <div class="scenario">
 <p>Supongamos que hace un año invertiste ${capital_invertido:,.0f}; con ese monto pudiste adquirir {titulos} títulos.</p>
@@ -416,12 +416,12 @@ table.resumen td.valor{{text-align:right;font-weight:600}}
 <div class="label">Rendimiento total en 1 año</div>
 <div class="value">{signo}{rendimiento_total_pct:,.2f}%</div>
 </div>
-<div class="disclaimer">Material exclusivo para uso con fines educativos e ilustrativos.<br>No constituye recomendaciones de inversión ni ofertas de compra o venta de activos financieros.<br>Rendimientos pasados no garantizan rendimientos futuros.</div>
+<div class="disclaimer">Ficha informativa basada en datos históricos.<br>No constituye recomendaciones de inversión ni ofertas de compra o venta de activos financieros.<br>Rendimientos pasados no garantizan rendimientos futuros.</div>
 <div class="footer">{escape(marca)}</div>
 </div></body></html>"""
     carpeta_salida.mkdir(parents=True, exist_ok=True)
     momento = datetime.now()
-    ruta = carpeta_salida / f"{momento:%Y%m%d_%H%M%S}_{ticker_base}_{año}_ficha_ejemplo_cliente.html"
+    ruta = carpeta_salida / f"{momento:%Y%m%d_%H%M%S}_{ticker_base}_{año}_ficha_completa_cliente.html"
     ruta.write_text(html, encoding="utf-8")
     return ruta
 
@@ -474,7 +474,7 @@ def mostrar_ficha_rendimiento(
     return ruta
 
 
-def mostrar_ficha_ejemplo_cliente(
+def mostrar_ficha_completa_cliente(
     ticker: str,
     año: int,
     carpeta_salida: Path,
@@ -482,9 +482,9 @@ def mostrar_ficha_ejemplo_cliente(
     capital_invertido: float = 10000.0,
     marca: str = "ZAMUDIO INVESTORS",
 ) -> Path:
-    """Genera la ficha de ejemplo para cliente con `crear_ficha_ejemplo_cliente` y la muestra en el notebook."""
-    ruta = crear_ficha_ejemplo_cliente(ticker, año, carpeta_salida, historial, capital_invertido, marca)
-    print(f"Ficha de ejemplo generada: {ruta}")
+    """Genera la ficha completa anual para el cliente con `crear_ficha_completa_cliente` y la muestra en el notebook."""
+    ruta = crear_ficha_completa_cliente(ticker, año, carpeta_salida, historial, capital_invertido, marca)
+    print(f"Ficha completa generada: {ruta}")
     display(HTML(ruta.read_text(encoding="utf-8")))
     return ruta
 
@@ -500,7 +500,7 @@ def exportar_ficha_a_pdf(
     carpeta_salida: Path,
 ) -> Path:
     """Exporta a PDF una ficha HTML ya generada (por `crear_ficha_rendimiento` o
-    `crear_ficha_ejemplo_cliente`), con un nombre de archivo estandarizado:
+    `crear_ficha_completa_cliente`), con un nombre de archivo estandarizado:
     `AAAA-MM-DD_HHMM_TICKER_descripcion-breve_periodo.pdf`.
 
     La fecha/hora del nombre se toma del propio nombre de `ruta_html` (prefijo

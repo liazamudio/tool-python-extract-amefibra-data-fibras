@@ -38,7 +38,7 @@ from modules.presentacion import (
     exportar_ficha_a_pdf,
     exportar_xlsx,
     mostrar_emisoras,
-    mostrar_ficha_ejemplo_cliente,
+    mostrar_ficha_completa_cliente,
     mostrar_ficha_rendimiento,
     probar_historial_dividendos,
     seleccionar_anio_interactivo,
@@ -134,25 +134,27 @@ AÑOS_DISPONIBLES = obtener_anios_disponibles(historial_dividendos)
 selector_anio = seleccionar_anio_interactivo(AÑOS_DISPONIBLES)
 
 # %%
+# Generamos la ficha de rendimiento anual y la exportamos a PDF
 AÑO_SELECCIONADO = selector_anio.value
 ruta_ficha = mostrar_ficha_rendimiento(TICKER_SELECCIONADO, AÑO_SELECCIONADO, CARPETA_SALIDA, historial_dividendos)
 
-# %%
+# Exportamos los resultados a un archivo pdf y mostramos la ruta del archivo generado
 ruta_pdf_rendimiento = exportar_ficha_a_pdf(
     ruta_ficha, TICKER_SELECCIONADO, "rendimiento anual", AÑO_SELECCIONADO, CARPETA_FICHAS_PDF
 )
 print(f"PDF generado: {ruta_pdf_rendimiento}")
 
 # %% [markdown]
-# ## Ficha de ejemplo para cliente (demostración)
+# ### Ficha completa del año seleccionado para cliente
 #
-# Versión de demostración de la ficha, pensada para mostrarle al cliente el aspecto del entregable final (escenario de inversión, distribuciones mensuales y rendimiento total en el año), con un diseño distinto al de la ficha de rendimiento anterior. Usa el mismo ticker y año ya elegidos arriba y los mismos datos reales (`historial_dividendos`); no inventa cifras. Es informativa y no constituye una recomendación de inversión.
+# Ficha completa anual pensada como entregable final para el cliente (escenario de inversión, distribuciones mensuales y rendimiento total en el año), con un diseño distinto al de la ficha de rendimiento anterior. Usa el mismo ticker y año ya elegidos arriba y los mismos datos reales (`historial_dividendos`); no inventa cifras. Es informativa y no constituye una recomendación de inversión.
 
 # %%
-ruta_ficha_ejemplo = mostrar_ficha_ejemplo_cliente(TICKER_SELECCIONADO, AÑO_SELECCIONADO, CARPETA_SALIDA, historial_dividendos)
+# Generamos la ficha completa anual para el cliente y la exportamos a PDF
+ruta_ficha_completa_cliente = mostrar_ficha_completa_cliente(TICKER_SELECCIONADO, AÑO_SELECCIONADO, CARPETA_SALIDA, historial_dividendos)
 
-# %%
-ruta_pdf_ejemplo = exportar_ficha_a_pdf(
-    ruta_ficha_ejemplo, TICKER_SELECCIONADO, "ficha ejemplo cliente", AÑO_SELECCIONADO, CARPETA_FICHAS_PDF
+# Exportamos los resultados a un archivo pdf y mostramos la ruta del archivo generado
+ruta_pdf_completa_cliente = exportar_ficha_a_pdf(
+    ruta_ficha_completa_cliente, TICKER_SELECCIONADO, "ficha completa cliente", AÑO_SELECCIONADO, CARPETA_FICHAS_PDF
 )
-print(f"PDF generado: {ruta_pdf_ejemplo}")
+print(f"PDF generado: {ruta_pdf_completa_cliente}")
