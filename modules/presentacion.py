@@ -15,11 +15,17 @@ from .extraccion import (
     COLUMNAS_DISTRIBUCIONES,
     URL_PAGINA,
     _descargar_cierres_anuales,
+    _descargar_cierres_rango,
     ejecutar_con_playwright_sync,
     obtener_distribuciones,
     obtener_tabla_fibras_en_notebook,
 )
-from .procesamiento import _normalizar_ticker, normalizar_para_analisis
+from .procesamiento import (
+    _normalizar_ticker,
+    calcular_riesgo_mensual,
+    calcular_ventana_movil_12_meses,
+    normalizar_para_analisis,
+)
 
 
 def aplicar_tema_oscuro_notebook() -> None:
@@ -178,12 +184,23 @@ def exportar_xlsx(df: pd.DataFrame, ruta: Path) -> Path:
 
 def crear_ficha_rendimiento(
     ticker: str,
-    año: int,
+    año: Optional[int],
     carpeta_salida: Path,
     historial: Optional[pd.DataFrame] = None,
+    fecha_referencia: Optional[datetime] = None,
 ) -> Path:
-    """Calcula y exporta una ficha HTML de rendimiento total para un año calendario."""
-    if not isinstance(año, int) or año < 1900 or año > 2100:
+    """Calcula y exporta una ficha HTML de rendimiento total para un año calendario.
+
+    Si `fecha_referencia` se especifica, `año` se ignora y el periodo analizado es,
+    en cambio, la ventana móvil de los últimos 12 meses completos terminando en esa
+    fecha (`calcular_ventana_movil_12_meses`; por defecto, si se pasa una fecha
+    "vacía"/None con este modo activo, la fecha de referencia es hoy). Este modo
+    agrega además el riesgo mensual promedio del periodo (volatilidad del retorno
+    total mensual) como cifra destacada junto al rendimiento total; el modo de año
+    calendario (`fecha_referencia=None`, el de siempre) no se modifica.
+    """
+    usar_ventana_movil = fecha_referencia is not None or año is None
+    if not usar_ventana_movil and (not isinstance(año, int) or año < 1900 or año > 2100):
         raise ValueError("El año debe ser un entero entre 1900 y 2100.")
     ticker_base = _normalizar_ticker(ticker)
     historial = historial if historial is not None else obtener_distribuciones(ticker_base, carpeta_salida)
@@ -192,15 +209,44 @@ def crear_ficha_rendimiento(
     if faltantes:
         raise ValueError(f"Faltan columnas en el historial: {sorted(faltantes)}")
 
-    pagos = historial.copy()
-    pagos["ex_date"] = pd.to_datetime(pagos["ex_date"], errors="coerce")
-    pagos["amount_mxn"] = pd.to_numeric(pagos["amount_mxn"], errors="coerce")
-    pagos = pagos[
-        (pagos["ticker"].astype(str).str.upper() == ticker_base)
-        & (pagos["ex_date"].dt.year == año)
-        & pagos["amount_mxn"].notna()
-    ]
-    cierres = _descargar_cierres_anuales(f"{ticker_base}.MX", año)
+    pagos_ticker = historial.copy()
+    pagos_ticker["ex_date"] = pd.to_datetime(pagos_ticker["ex_date"], errors="coerce")
+    pagos_ticker["amount_mxn"] = pd.to_numeric(pagos_ticker["amount_mxn"], errors="coerce")
+    pagos_ticker = pagos_ticker[pagos_ticker["ticker"].astype(str).str.upper() == ticker_base]
+
+    riesgo_html = ""
+    if usar_ventana_movil:
+        fecha_inicio, fecha_fin = calcular_ventana_movil_12_meses(fecha_referencia)
+        pagos = pagos_ticker[
+            (pagos_ticker["ex_date"] >= fecha_inicio)
+            & (pagos_ticker["ex_date"] <= fecha_fin)
+            & pagos_ticker["amount_mxn"].notna()
+        ]
+        cierres_historicos = _descargar_cierres_rango(f"{ticker_base}.MX", fecha_inicio - pd.Timedelta(days=40), fecha_fin)
+        cierres = cierres_historicos[(cierres_historicos.index >= fecha_inicio) & (cierres_historicos.index <= fecha_fin)]
+        if cierres.empty:
+            raise ValueError(
+                f"No hay precios disponibles para {ticker_base} entre {fecha_inicio:%Y-%m-%d} y {fecha_fin:%Y-%m-%d}."
+            )
+        etiqueta_periodo = f"Últimos 12 meses ({fecha_inicio:%d/%m/%Y}–{fecha_fin:%d/%m/%Y})"
+        etiqueta_total = "Rendimiento total de los últimos 12 meses"
+        etiqueta_pagos = "Distribuciones del periodo"
+        sufijo_archivo = f"{fecha_fin:%Y%m%d}_ult12m"
+        riesgo = calcular_riesgo_mensual(cierres_historicos, pagos, fecha_inicio, fecha_fin)
+        riesgo_html = (
+            '<div class="legend">Riesgo mensual promedio (volatilidad del retorno total mensual): '
+            f'{riesgo["volatilidad_mensual_pct"]:,.2f}%</div>'
+        )
+        aviso_riesgo = " El riesgo mostrado es histórico y tampoco debe interpretarse como predictor de riesgo futuro."
+    else:
+        pagos = pagos_ticker[(pagos_ticker["ex_date"].dt.year == año) & pagos_ticker["amount_mxn"].notna()]
+        cierres = _descargar_cierres_anuales(f"{ticker_base}.MX", año)
+        etiqueta_periodo = f"Año calendario {año}"
+        etiqueta_total = "Rendimiento total del año"
+        etiqueta_pagos = "Distribuciones del año"
+        sufijo_archivo = f"{año}"
+        aviso_riesgo = ""
+
     precio_inicial = float(cierres.iloc[0])
     precio_final = float(cierres.iloc[-1])
     total_dividendos = float(pagos["amount_mxn"].sum())
@@ -222,20 +268,20 @@ def crear_ficha_rendimiento(
     tabla_pagos["yield_pct"] = tabla_pagos["yield_pct"].map(lambda valor: f"{valor:,.2f}%")
     tabla_html = tabla_pagos.to_html(index=False, classes="payments", border=0, justify="left")
     html = f"""<!doctype html>
-<html lang="es"><head><meta charset="utf-8"><title>Ficha {escape(ticker_base)} {año}</title>
+<html lang="es"><head><meta charset="utf-8"><title>Ficha {escape(ticker_base)} {sufijo_archivo}</title>
 <style>
 body{{margin:0;background:#12201e;color:#e8ede9;font-family:Georgia,serif}}main{{max-width:900px;margin:32px auto;padding:32px;background:#1b2926;color:#e8ede9;box-shadow:0 8px 24px #00000066}}h1{{margin:0 0 6px;font-size:36px;color:#e8ede9}}h2{{color:#e8ede9;margin-top:28px}}.subtitle{{color:#8ba39c;margin-bottom:28px}}.metrics{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}}.metric{{border-top:3px solid #d8a24a;padding:12px 0}}.label{{font:12px sans-serif;text-transform:uppercase;letter-spacing:1px;color:#8ba39c}}.value{{font-size:24px;margin-top:6px;color:#e8ede9}}.total{{margin:28px 0;padding:18px;background:#1e352e;border-left:5px solid {color_total}}}.total strong{{font-size:34px;color:{color_total}}}.bar{{height:28px;display:flex;margin:12px 0 8px;background:#2a3835}}.bar div{{height:100%}}.legend{{font:14px sans-serif;color:#9db3ac}}table{{width:100%;border-collapse:collapse;font:14px sans-serif;margin-top:20px}}th,td{{padding:9px;border-bottom:1px solid #30423e;text-align:left;color:#e8ede9}}th{{color:#8ba39c}}.notice{{margin-top:28px;font:12px sans-serif;color:#8ba39c}}@media(max-width:650px){{main{{margin:0;padding:22px}}h1{{font-size:29px}}.metrics{{grid-template-columns:1fr 1fr}}}}
 </style></head><body><main>
-<h1>Ficha de rendimiento: {escape(ticker_base)}</h1><div class="subtitle">Año calendario {año} · cierres del {fecha_inicial} al {fecha_final}</div>
+<h1>Ficha de rendimiento: {escape(ticker_base)}</h1><div class="subtitle">{etiqueta_periodo} · cierres del {fecha_inicial} al {fecha_final}</div>
 <div class="metrics"><div class="metric"><div class="label">Precio inicial</div><div class="value">${precio_inicial:,.2f} MXN</div></div><div class="metric"><div class="label">Precio final</div><div class="value">${precio_final:,.2f} MXN</div></div><div class="metric"><div class="label">Variación de precio</div><div class="value">{rendimiento_capital:,.2f}%</div></div></div>
-<div class="total"><div class="label">Rendimiento total del año</div><strong>{rendimiento_total:,.2f}%</strong><div class="legend">Dividendos: {rendimiento_dividendos:,.2f}% · Capital: {rendimiento_capital:,.2f}% · Ganancia total: ${ganancia_total:,.2f} MXN</div></div>
+<div class="total"><div class="label">{etiqueta_total}</div><strong>{rendimiento_total:,.2f}%</strong><div class="legend">Dividendos: {rendimiento_dividendos:,.2f}% · Capital: {rendimiento_capital:,.2f}% · Ganancia total: ${ganancia_total:,.2f} MXN</div>{riesgo_html}</div>
 <h2>Composición de la ganancia</h2><div class="bar"><div style="width:{ancho_dividendos:.2f}%;background:#d8a24a"></div><div style="width:{ancho_capital:.2f}%;background:{color_capital}"></div></div><div class="legend">Dividendos recibidos: ${total_dividendos:,.4f} MXN · Variación de capital: ${variacion_capital:,.2f} MXN</div>
-<h2>Distribuciones del año ({len(pagos)} pagos)</h2>{tabla_html}
-<div class="notice">Ficha informativa basada en datos históricos. Los pagos se identifican por ex_date. No constituye una recomendación de compra o venta; el rendimiento pasado no garantiza resultados futuros.</div>
+<h2>{etiqueta_pagos} ({len(pagos)} pagos)</h2>{tabla_html}
+<div class="notice">Ficha informativa basada en datos históricos. Los pagos se identifican por ex_date. No constituye una recomendación de compra o venta; el rendimiento pasado no garantiza resultados futuros.{aviso_riesgo}</div>
 </main></body></html>"""
     carpeta_salida.mkdir(parents=True, exist_ok=True)
     momento = datetime.now()
-    ruta = carpeta_salida / f"{momento:%Y%m%d_%H%M%S}_{ticker_base}_{año}_ficha_rendimiento.html"
+    ruta = carpeta_salida / f"{momento:%Y%m%d_%H%M%S}_{ticker_base}_{sufijo_archivo}_ficha_rendimiento.html"
     ruta.write_text(html, encoding="utf-8")
     return ruta
 
@@ -259,11 +305,12 @@ def _fecha_corta_es(fecha: pd.Timestamp) -> str:
 
 def crear_ficha_completa_cliente(
     ticker: str,
-    año: int,
+    año: Optional[int],
     carpeta_salida: Path,
     historial: Optional[pd.DataFrame] = None,
     capital_invertido: float = 10000.0,
     marca: str = "ZAMUDIO INVESTORS",
+    fecha_referencia: Optional[datetime] = None,
 ) -> Path:
     """Calcula y exporta la ficha HTML completa anual para el cliente, con datos reales de un ticker/año.
 
@@ -274,8 +321,16 @@ def crear_ficha_completa_cliente(
     año. Reutiliza las mismas fuentes de datos (`obtener_distribuciones`,
     `_descargar_cierres_anuales`) que la ficha de rendimiento, en vez de duplicar
     la lógica de extracción.
+
+    Si `fecha_referencia` se especifica (o `año` se omite), `año` se ignora y el
+    periodo analizado es la ventana móvil de los últimos 12 meses completos
+    terminando en esa fecha, igual que en `crear_ficha_rendimiento`. Este modo
+    agrega, además, una sección de riesgo del periodo (volatilidad anualizada del
+    retorno total mensual, con la serie de los 12 retornos mensuales en barras);
+    el modo de año calendario (por defecto) no se modifica.
     """
-    if not isinstance(año, int) or año < 1900 or año > 2100:
+    usar_ventana_movil = fecha_referencia is not None or año is None
+    if not usar_ventana_movil and (not isinstance(año, int) or año < 1900 or año > 2100):
         raise ValueError("El año debe ser un entero entre 1900 y 2100.")
     if capital_invertido <= 0:
         raise ValueError("El capital invertido debe ser positivo.")
@@ -286,16 +341,37 @@ def crear_ficha_completa_cliente(
     if faltantes:
         raise ValueError(f"Faltan columnas en el historial: {sorted(faltantes)}")
 
-    pagos = historial.copy()
-    pagos["ex_date"] = pd.to_datetime(pagos["ex_date"], errors="coerce")
-    pagos["amount_mxn"] = pd.to_numeric(pagos["amount_mxn"], errors="coerce")
-    pagos = pagos[
-        (pagos["ticker"].astype(str).str.upper() == ticker_base)
-        & (pagos["ex_date"].dt.year == año)
-        & pagos["amount_mxn"].notna()
-    ]
+    pagos_ticker = historial.copy()
+    pagos_ticker["ex_date"] = pd.to_datetime(pagos_ticker["ex_date"], errors="coerce")
+    pagos_ticker["amount_mxn"] = pd.to_numeric(pagos_ticker["amount_mxn"], errors="coerce")
+    pagos_ticker = pagos_ticker[pagos_ticker["ticker"].astype(str).str.upper() == ticker_base]
 
-    cierres = _descargar_cierres_anuales(f"{ticker_base}.MX", año)
+    riesgo_seccion_html = ""
+    aviso_riesgo = ""
+    if usar_ventana_movil:
+        fecha_inicio, fecha_fin = calcular_ventana_movil_12_meses(fecha_referencia)
+        pagos = pagos_ticker[
+            (pagos_ticker["ex_date"] >= fecha_inicio)
+            & (pagos_ticker["ex_date"] <= fecha_fin)
+            & pagos_ticker["amount_mxn"].notna()
+        ]
+        cierres_historicos = _descargar_cierres_rango(f"{ticker_base}.MX", fecha_inicio - pd.Timedelta(days=40), fecha_fin)
+        cierres = cierres_historicos[(cierres_historicos.index >= fecha_inicio) & (cierres_historicos.index <= fecha_fin)]
+        if cierres.empty:
+            raise ValueError(
+                f"No hay precios disponibles para {ticker_base} entre {fecha_inicio:%Y-%m-%d} y {fecha_fin:%Y-%m-%d}."
+            )
+        etiqueta_periodo = f"{fecha_inicio:%b %Y}–{fecha_fin:%b %Y} · Desempeño en 12 meses"
+        etiqueta_dist = "Distribuciones del periodo"
+        sufijo_archivo = f"{fecha_fin:%Y%m%d}_ult12m"
+        meses_periodo = pd.period_range(start=fecha_inicio, end=fecha_fin, freq="M")
+    else:
+        pagos = pagos_ticker[(pagos_ticker["ex_date"].dt.year == año) & pagos_ticker["amount_mxn"].notna()]
+        cierres = _descargar_cierres_anuales(f"{ticker_base}.MX", año)
+        etiqueta_periodo = f"{año} · Desempeño en 12 meses"
+        etiqueta_dist = "Distribuciones en el año"
+        sufijo_archivo = f"{año}"
+
     precio_compra = float(cierres.iloc[0])
     precio_actual = float(cierres.iloc[-1])
     fecha_inicial = cierres.index[0]
@@ -308,14 +384,44 @@ def crear_ficha_completa_cliente(
     retorno_total = plusvalia + distribuciones_totales
     rendimiento_total_pct = retorno_total / capital_invertido * 100
 
-    pagos_por_mes = pagos.groupby(pagos["ex_date"].dt.month)["amount_mxn"].sum().reindex(range(1, 13), fill_value=0.0)
+    if usar_ventana_movil:
+        pagos_por_mes = (
+            pagos.groupby(pagos["ex_date"].dt.to_period("M"))["amount_mxn"].sum().reindex(meses_periodo, fill_value=0.0)
+        )
+        etiquetas_meses = [f"{_MESES_ABREV_ES[periodo.month - 1]} {periodo.year % 100:02d}" for periodo in meses_periodo]
+    else:
+        pagos_por_mes = pagos.groupby(pagos["ex_date"].dt.month)["amount_mxn"].sum().reindex(range(1, 13), fill_value=0.0)
+        etiquetas_meses = _MESES_ABREV_ES
     valores_mensuales = pagos_por_mes.tolist()
     max_mensual = max(max(valores_mensuales), 0.000001)
     barras_html = "".join(
         f'<div class="bar-col"><div class="bar-fill" style="height:{valor / max_mensual * 100:.1f}%"></div>'
         f'<span class="bar-label">{etiqueta}</span></div>'
-        for etiqueta, valor in zip(_MESES_ABREV_ES, valores_mensuales)
+        for etiqueta, valor in zip(etiquetas_meses, valores_mensuales)
     )
+
+    if usar_ventana_movil:
+        riesgo = calcular_riesgo_mensual(cierres_historicos, pagos, fecha_inicio, fecha_fin)
+        retornos_mensuales = riesgo["retornos_mensuales_pct"]
+        max_retorno_abs = max(retornos_mensuales.abs().max(), 0.000001)
+        barras_riesgo_html = "".join(
+            f'<div class="bar-col"><div class="bar-fill {"pos" if retorno >= 0 else "neg"}" '
+            f'style="height:{abs(retorno) / max_retorno_abs * 100:.1f}%"></div>'
+            f'<span class="bar-label">{_MESES_ABREV_ES[fecha.month - 1]} {fecha.year % 100:02d}</span></div>'
+            for fecha, retorno in retornos_mensuales.items()
+        )
+        riesgo_seccion_html = f"""<div class="section">
+<h2 class="section-title">Riesgo del periodo</h2>
+<div class="dist-grid">
+<div class="dist-values">
+<div class="big">{riesgo["volatilidad_anualizada_pct"]:,.2f}%</div><div class="caption">volatilidad anualizada</div>
+<div class="big">{riesgo["volatilidad_mensual_pct"]:,.2f}%</div><div class="caption">volatilidad mensual promedio</div>
+</div>
+<div class="chart">{barras_riesgo_html}</div>
+</div>
+<div class="period-note">Retorno total mensual (variación de precio + dividendos del mes) de cada uno de los últimos 12 meses; verde = mes positivo, rojo = mes negativo.</div>
+</div>"""
+        aviso_riesgo = " El riesgo mostrado es histórico y tampoco debe interpretarse como predictor de riesgo futuro."
 
     detalle_pagos = pagos.sort_values("ex_date").copy()
     if "yield_pct" in detalle_pagos.columns:
@@ -333,7 +439,7 @@ def crear_ficha_completa_cliente(
     color_rendimiento = "#c0503c" if rendimiento_total_pct < 0 else "#2f8f6f"
 
     html = f"""<!doctype html>
-<html lang="es"><head><meta charset="utf-8"><title>Ficha completa {escape(ticker_base)} {año}</title>
+<html lang="es"><head><meta charset="utf-8"><title>Ficha completa {escape(ticker_base)} {sufijo_archivo}</title>
 <style>
 body{{margin:0;background:#f4f6f5;font-family:'Segoe UI',Arial,sans-serif;color:#25332e}}
 .card{{max-width:480px;margin:24px auto;background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 6px 18px #00000022;color:#1c2a25}}
@@ -357,6 +463,8 @@ h2.section-title{{font-size:13px;text-transform:uppercase;letter-spacing:.5px;co
 .chart{{flex:1;display:flex;align-items:flex-end;gap:4px;height:70px}}
 .bar-col{{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}}
 .bar-fill{{width:70%;background:#3a8f78;border-radius:2px 2px 0 0;min-height:2px}}
+.bar-fill.pos{{background:#2f8f6f}}
+.bar-fill.neg{{background:#c0503c}}
 .bar-label{{font-size:8px;color:#5c6b65;margin-top:3px}}
 table.detalle{{width:100%;border-collapse:collapse;margin-top:10px;font-size:12px}}
 table.detalle th{{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.3px;color:#55675f;padding:6px 8px;border-bottom:1px solid #d8e3df}}
@@ -379,7 +487,7 @@ table.resumen td.valor{{text-align:right;font-weight:600}}
 .footer{{background:#22463c;color:#fff;text-align:center;padding:12px;font-size:12px;letter-spacing:2px}}
 </style></head>
 <body><div class="card">
-<div class="header"><h1>{escape(ticker_base)}</h1><div class="subtitle">{año} · Desempeño en 12 meses</div></div>
+<div class="header"><h1>{escape(ticker_base)}</h1><div class="subtitle">{etiqueta_periodo}</div></div>
 <div class="section">
 <div class="scenario">
 <p>Supongamos que hace un año invertiste ${capital_invertido:,.0f}; con ese monto pudiste adquirir {titulos} títulos.</p>
@@ -392,7 +500,7 @@ table.resumen td.valor{{text-align:right;font-weight:600}}
 <div class="period-note">Periodo de análisis: {_fecha_larga_es(fecha_inicial)} – {_fecha_larga_es(fecha_final)}</div>
 </div>
 <div class="section">
-<h2 class="section-title">Distribuciones en el año</h2>
+<h2 class="section-title">{etiqueta_dist}</h2>
 <div class="dist-grid">
 <div class="dist-values">
 <div class="big">${dividendo_por_titulo:,.4f}</div><div class="caption">(por título)</div>
@@ -412,16 +520,16 @@ table.resumen td.valor{{text-align:right;font-weight:600}}
 </table>
 <div class="retorno">Retorno total: <strong>${retorno_total:,.2f}</strong></div>
 </div>
-<div class="rendimiento">
+{riesgo_seccion_html}<div class="rendimiento">
 <div class="label">Rendimiento total en 1 año</div>
 <div class="value">{signo}{rendimiento_total_pct:,.2f}%</div>
 </div>
-<div class="disclaimer">Ficha informativa basada en datos históricos.<br>No constituye recomendaciones de inversión ni ofertas de compra o venta de activos financieros.<br>Rendimientos pasados no garantizan rendimientos futuros.</div>
+<div class="disclaimer">Ficha informativa basada en datos históricos.<br>No constituye recomendaciones de inversión ni ofertas de compra o venta de activos financieros.<br>Rendimientos pasados no garantizan rendimientos futuros.{aviso_riesgo}</div>
 <div class="footer">{escape(marca)}</div>
 </div></body></html>"""
     carpeta_salida.mkdir(parents=True, exist_ok=True)
     momento = datetime.now()
-    ruta = carpeta_salida / f"{momento:%Y%m%d_%H%M%S}_{ticker_base}_{año}_ficha_completa_cliente.html"
+    ruta = carpeta_salida / f"{momento:%Y%m%d_%H%M%S}_{ticker_base}_{sufijo_archivo}_ficha_completa_cliente.html"
     ruta.write_text(html, encoding="utf-8")
     return ruta
 
@@ -451,7 +559,11 @@ def probar_historial_dividendos(ticker: str, emisoras: pd.Series, carpeta_salida
     assert historial["ex_date"].is_monotonic_increasing
     assert not historial.duplicated(subset=["ticker", "ex_date", "amount_mxn"]).any()
     assert (historial["amount_mxn"] > 0).all()
-    assert historial["annualized_yield_pct"].notna().all()
+    # Con una sola distribución registrada no hay forma de estimar el intervalo entre
+    # pagos, así que `annualized_yield_pct` queda NaN para ese caso (ver
+    # `obtener_distribuciones`); con dos o más pagos, sí debe estar siempre poblado.
+    if len(historial) >= 2:
+        assert historial["annualized_yield_pct"].notna().all()
     assert Path(historial.attrs["ruta_csv"]).exists()
 
     print(f"Ticker probado: {ticker}. Registros: {len(historial)}")
@@ -463,12 +575,17 @@ def probar_historial_dividendos(ticker: str, emisoras: pd.Series, carpeta_salida
 
 def mostrar_ficha_rendimiento(
     ticker: str,
-    año: int,
+    año: Optional[int],
     carpeta_salida: Path,
     historial: Optional[pd.DataFrame] = None,
+    fecha_referencia: Optional[datetime] = None,
 ) -> Path:
-    """Genera la ficha de rendimiento con `crear_ficha_rendimiento` y la muestra en el notebook."""
-    ruta = crear_ficha_rendimiento(ticker, año, carpeta_salida, historial)
+    """Genera la ficha de rendimiento con `crear_ficha_rendimiento` y la muestra en el notebook.
+
+    Ver `crear_ficha_rendimiento` para el modo de ventana móvil de últimos 12 meses
+    (`fecha_referencia`, o `año=None`), que coexiste con el modo de año calendario.
+    """
+    ruta = crear_ficha_rendimiento(ticker, año, carpeta_salida, historial, fecha_referencia)
     print(f"Ficha generada: {ruta}")
     display(HTML(ruta.read_text(encoding="utf-8")))
     return ruta
@@ -476,14 +593,20 @@ def mostrar_ficha_rendimiento(
 
 def mostrar_ficha_completa_cliente(
     ticker: str,
-    año: int,
+    año: Optional[int],
     carpeta_salida: Path,
     historial: Optional[pd.DataFrame] = None,
     capital_invertido: float = 10000.0,
     marca: str = "ZAMUDIO INVESTORS",
+    fecha_referencia: Optional[datetime] = None,
 ) -> Path:
-    """Genera la ficha completa anual para el cliente con `crear_ficha_completa_cliente` y la muestra en el notebook."""
-    ruta = crear_ficha_completa_cliente(ticker, año, carpeta_salida, historial, capital_invertido, marca)
+    """Genera la ficha completa anual para el cliente con `crear_ficha_completa_cliente` y la muestra en el notebook.
+
+    Ver `crear_ficha_completa_cliente` para el modo de ventana móvil de últimos 12
+    meses (`fecha_referencia`, o `año=None`), que coexiste con el modo de año
+    calendario.
+    """
+    ruta = crear_ficha_completa_cliente(ticker, año, carpeta_salida, historial, capital_invertido, marca, fecha_referencia)
     print(f"Ficha completa generada: {ruta}")
     display(HTML(ruta.read_text(encoding="utf-8")))
     return ruta

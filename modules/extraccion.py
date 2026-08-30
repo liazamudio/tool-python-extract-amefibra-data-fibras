@@ -191,6 +191,50 @@ def _descargar_cierres_anuales_sin_cachear(ticker_yahoo: str, año: int) -> pd.S
     return cierres
 
 
+_CACHE_CIERRES_RANGO: dict[tuple[str, pd.Timestamp, pd.Timestamp], pd.Series] = {}
+
+
+def _descargar_cierres_rango(ticker_yahoo: str, inicio: pd.Timestamp, fin: pd.Timestamp) -> pd.Series:
+    """Cierres diarios de `ticker_yahoo` entre `inicio` y `fin` (ambos inclusive).
+
+    Generaliza `_descargar_cierres_anuales` para un rango arbitrario de fechas (p. ej.
+    la ventana móvil de últimos 12 meses). Se cachea en memoria (diccionario simple,
+    no `functools.lru_cache`: ese decorador envuelve la función en un objeto de C que
+    `%autoreload` de IPython no siempre logra actualizar en caliente al agregar
+    funciones nuevas al módulo) solo cuando `fin` ya quedó en el pasado (rango
+    cerrado); si `fin` es hoy o una fecha futura, se descarga siempre en fresco,
+    mismo criterio que se usa para el año en curso en `_descargar_cierres_anuales`.
+    """
+    if fin.normalize() >= pd.Timestamp(datetime.now().date()):
+        return _descargar_cierres_rango_sin_cachear(ticker_yahoo, inicio, fin)
+    clave = (ticker_yahoo, inicio, fin)
+    if clave not in _CACHE_CIERRES_RANGO:
+        _CACHE_CIERRES_RANGO[clave] = _descargar_cierres_rango_sin_cachear(ticker_yahoo, inicio, fin)
+    return _CACHE_CIERRES_RANGO[clave].copy()
+
+
+def _descargar_cierres_rango_sin_cachear(ticker_yahoo: str, inicio: pd.Timestamp, fin: pd.Timestamp) -> pd.Series:
+    precios = yf.download(
+        ticker_yahoo,
+        start=inicio.strftime("%Y-%m-%d"),
+        end=(fin + pd.Timedelta(days=1)).strftime("%Y-%m-%d"),
+        auto_adjust=False,
+        progress=False,
+        threads=False,
+    )
+    if precios is None or precios.empty:
+        raise ValueError(
+            f"No hay precios disponibles para {ticker_yahoo} entre {inicio:%Y-%m-%d} y {fin:%Y-%m-%d}."
+        )
+    if isinstance(precios.columns, pd.MultiIndex):
+        precios.columns = precios.columns.get_level_values(0)
+    if "Close" not in precios:
+        raise ValueError(f"La respuesta de precios de {ticker_yahoo} no contiene cierre.")
+    cierres = precios["Close"].dropna()
+    cierres.index = pd.to_datetime(cierres.index).tz_localize(None).normalize()
+    return cierres
+
+
 def obtener_distribuciones(ticker: str, carpeta_salida: Path, intentos: int = 3) -> pd.DataFrame:
     """Obtiene distribuciones históricas de una FIBRA BMV y las exporta a `carpeta_salida`."""
     ticker_base = _normalizar_ticker(ticker)
@@ -228,6 +272,10 @@ def obtener_distribuciones(ticker: str, carpeta_salida: Path, intentos: int = 3)
     ).where(distribuciones["close_on_ex_date_mxn"] > 0)
     diferencias_dias = distribuciones["ex_date"].sort_values().diff().dt.days
     intervalo_referencia = diferencias_dias.dropna().median()
+    # Con una sola distribución en todo el historial (FIBRA de IPO muy reciente o muy
+    # poco líquida), `diferencias_dias` no tiene ningún valor no nulo del cual sacar
+    # una mediana, así que `intervalo_referencia` queda NaN y `annualized_yield_pct`
+    # también: no hay forma de estimar el intervalo entre pagos con un solo dato.
     distribuciones["annualized_yield_pct"] = (
         distribuciones["yield_pct"] * 365 / diferencias_dias.fillna(intervalo_referencia)
     )
