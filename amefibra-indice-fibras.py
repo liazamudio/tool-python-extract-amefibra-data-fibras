@@ -47,9 +47,10 @@ from modules.presentacion import (
 from modules.procesamiento import obtener_anios_disponibles
 
 # %%
+# Aplicar tema oscuro al notebook
 aplicar_tema_oscuro_notebook()
 
-# %%
+# Configuración de rutas de salida
 CARPETA_SALIDA = Path.cwd() / "output"
 CARPETA_FICHAS_PDF = CARPETA_SALIDA / "fichas"
 
@@ -120,7 +121,7 @@ TICKER_SELECCIONADO = selector_ticker.value
 historial_dividendos = probar_historial_dividendos(TICKER_SELECCIONADO, df_emisoras["Emisora"], CARPETA_SALIDA)
 
 # %% [markdown]
-# ## Ficha de rendimiento anual
+# ## FICHA DE DENDIMIENTO ANUAL PERSONALIZADO
 #
 # La ficha usa el **año calendario** (`1 de enero` a `31 de diciembre`). Los pagos se filtran por `ex_date`, que es la fecha disponible en el historial de `yfinance`; no se inventa una fecha de pago que la fuente no proporciona. Los precios inicial y final son el primer y último cierre disponible dentro del año. El rendimiento por dividendos se calcula contra el precio inicial, y el rendimiento de capital contra la variación entre precio final e inicial. La ficha es informativa y no constituye una recomendación de inversión.
 
@@ -158,3 +159,51 @@ ruta_pdf_completa_cliente = exportar_ficha_a_pdf(
     ruta_ficha_completa_cliente, TICKER_SELECCIONADO, "ficha completa cliente", AÑO_SELECCIONADO, CARPETA_FICHAS_PDF
 )
 print(f"PDF generado: {ruta_pdf_completa_cliente}")
+
+# %% [markdown]
+# ## FICHA DE RENDIMIENTO Y RIESGO DE LOS ÚLTIMOS 12 MESES
+#
+# Misma ficha de rendimiento de arriba, pero calculada sobre la ventana móvil de los últimos 12 meses completos (en vez de año calendario), con el riesgo mensual promedio del periodo (volatilidad del retorno total mensual: variación de precio + dividendos del mes) agregado como cifra destacada junto al rendimiento total.
+
+# %%
+# Fecha de referencia para la ventana móvil de 12 meses (fecha_fin del periodo).
+# None = usa la fecha actual; fijar una fecha (ej. "2025-12-31") permite correr el
+# análisis de forma retrospectiva, útil para pruebas. El flujo de año calendario
+# de las celdas anteriores no se modifica y sigue disponible como antes.
+from modules.procesamiento import calcular_ventana_movil_12_meses
+
+FECHA_REFERENCIA_12M = None
+FECHA_INICIO_12M, FECHA_FIN_12M = calcular_ventana_movil_12_meses(FECHA_REFERENCIA_12M)
+print(f"Ventana de análisis: {FECHA_INICIO_12M:%Y-%m-%d} a {FECHA_FIN_12M:%Y-%m-%d}")
+
+# %% [markdown]
+# ### Ficha sencilla de los últimos 12 meses
+
+# %%
+# Generamos la ficha sencilla de rendimiento de los últimos 12 meses y la exportamos a PDF
+ruta_ficha_12m = mostrar_ficha_rendimiento(
+    TICKER_SELECCIONADO, None, CARPETA_SALIDA, historial_dividendos, fecha_referencia=FECHA_REFERENCIA_12M
+)
+
+# Exportamos los resultados a un archivo pdf y mostramos la ruta del archivo generado
+ruta_pdf_12m = exportar_ficha_a_pdf(
+    ruta_ficha_12m, TICKER_SELECCIONADO, "rendimiento 12 meses", f"{FECHA_FIN_12M:%Y%m%d}", CARPETA_FICHAS_PDF
+)
+print(f"PDF generado: {ruta_pdf_12m}")
+
+# %% [markdown]
+# ### Ficha completa de los últimos 12 meses para cliente
+#
+# Misma ficha completa de arriba, pero sobre la ventana móvil de últimos 12 meses: agrega una sección de riesgo del periodo con la volatilidad anualizada del retorno total mensual y la serie de los 12 retornos mensuales en barras (verde = mes positivo, rojo = mes negativo), colocada junto al desglose de rendimiento (plusvalía vs. distribuciones).
+
+# %%
+# Generamos la ficha completa de los últimos 12 meses para el cliente y la exportamos a PDF
+ruta_ficha_completa_12m = mostrar_ficha_completa_cliente(
+    TICKER_SELECCIONADO, None, CARPETA_SALIDA, historial_dividendos, fecha_referencia=FECHA_REFERENCIA_12M
+)
+
+# Exportamos los resultados a un archivo pdf y mostramos la ruta del archivo generado
+ruta_pdf_completa_12m = exportar_ficha_a_pdf(
+    ruta_ficha_completa_12m, TICKER_SELECCIONADO, "ficha completa 12 meses", f"{FECHA_FIN_12M:%Y%m%d}", CARPETA_FICHAS_PDF
+)
+print(f"PDF generado: {ruta_pdf_completa_12m}")

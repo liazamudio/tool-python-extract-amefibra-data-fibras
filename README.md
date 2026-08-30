@@ -1,6 +1,6 @@
 # AMEFIBRA Índice FIBRAS — Notebook de extracción y análisis
 
-Notebook de Jupyter (con su equivalente en script `.py`) que extrae el Índice FIBRAS de AMEFIBRA en tiempo real, consulta el listado de emisoras, descarga el historial de dividendos de cada FIBRA vía `yfinance`, genera una ficha de rendimiento anual (dividendos + variación de capital) y una ficha completa anual para el cliente por ticker, y exporta ambas a PDF con nombre de archivo estandarizado.
+Notebook de Jupyter (con su equivalente en script `.py`) que extrae el Índice FIBRAS de AMEFIBRA en tiempo real, consulta el listado de emisoras, descarga el historial de dividendos de cada FIBRA vía `yfinance`, genera una ficha de rendimiento anual (dividendos + variación de capital) y una ficha completa anual para el cliente por ticker, exporta ambas a PDF con nombre de archivo estandarizado, y ofrece además una variante de ambas fichas sobre una ventana móvil de los últimos 12 meses con el riesgo mensual del periodo (volatilidad del retorno total mensual).
 
 <!-- COMPLETAR: agregar un GIF o captura de pantalla mostrando una corrida del notebook (tabla del índice, selector de ticker/año y la ficha HTML de rendimiento). No se pudo generar automáticamente porque requiere una grabación de pantalla. -->
 
@@ -37,8 +37,9 @@ Además, ninguna fuente pública ofrece una API homogénea y gratuita de histori
 - Descarga y valida el historial de dividendos de la FIBRA elegida (fecha ex-dividendo, monto, rendimiento y rendimiento anualizado), archivado también en `output/`
 - Genera una ficha HTML de rendimiento total por año calendario (dividendos + variación de capital vs. precio inicial/final), guardada en `output/`
 - Genera además la ficha completa anual para el cliente, con un diseño distinto (escenario de inversión sobre un capital de referencia, gráfica de distribuciones mensuales, tabla de detalle fecha/monto/rendimiento y rendimiento total destacado), pensada como entregable final
-- Exporta ambas fichas a PDF en `output/fichas/`, con nombre de archivo estandarizado (`AAAA-MM-DD_HHMM_TICKER_descripcion-breve_periodo.pdf`) que permite identificarlas y ordenarlas cronológicamente sin abrirlas
-- Cachea en memoria los cierres anuales de años ya cerrados, para no volver a descargar de Yahoo Finance los mismos precios cuando se generan varias fichas del mismo ticker/año en una misma corrida (el año en curso nunca se cachea, porque sus cierres siguen cambiando)
+- **Variante de ventana móvil de últimos 12 meses:** alternativa al año calendario que coexiste con él (no lo reemplaza) — calcula el rendimiento sobre los 12 meses completos más recientes contados desde una fecha de referencia configurable (por defecto, hoy), y agrega el **riesgo del periodo**: la volatilidad del retorno total mensual (variación de precio + dividendos de cada mes), mostrada como cifra destacada en la ficha sencilla (versión mensual) y como volatilidad anualizada más una gráfica de barras de los 12 retornos mensuales (verde/rojo según el signo) en la ficha completa
+- Exporta ambas fichas —de año calendario o de ventana móvil de 12 meses— a PDF en `output/fichas/`, con nombre de archivo estandarizado (`AAAA-MM-DD_HHMM_TICKER_descripcion-breve_periodo.pdf`) que permite identificarlas y ordenarlas cronológicamente sin abrirlas
+- Cachea en memoria los cierres (anuales o de la ventana móvil) ya cerrados, para no volver a descargar de Yahoo Finance los mismos precios cuando se generan varias fichas del mismo ticker/periodo en una misma corrida (el periodo en curso —el año actual, o una ventana que termina hoy— nunca se cachea, porque sus cierres siguen cambiando)
 - Exporta opcionalmente el índice completo a CSV compatible con Excel (`utf-8-sig`) y/o XLSX
 - Solo lee información pública ya publicada en las páginas/fuentes consultadas, sin credenciales ni endpoints privados
 
@@ -51,7 +52,7 @@ tool-python-extract-amefibra-data-fibras/
 ├── modules/                       # Lógica reutilizable importada por el notebook (mantiene las celdas simples)
 │   ├── __init__.py
 │   ├── extraccion.py              # Scraping del índice (Playwright) y descarga de dividendos/precios (yfinance)
-│   ├── procesamiento.py           # Normalización y transformación de los DataFrames (snake_case, tipos, periodicidad)
+│   ├── procesamiento.py           # Normalización de DataFrames (snake_case, tipos, periodicidad), ventana móvil de 12 meses y riesgo mensual
 │   └── presentacion.py            # Despliegue en notebook, fichas HTML/PDF y exportación a CSV/XLSX, selectores interactivos
 ├── output/                        # Generado en cada corrida (CSV/XLSX/HTML); no versionado, ver .gitignore
 │   └── fichas/                    # PDFs exportados de las fichas, con nombre de archivo estandarizado
@@ -99,8 +100,9 @@ Abre `amefibra-indice-fibras.ipynb` en VS Code (extensión Jupyter) o Jupyter La
 5. **Selector de ticker** — despliega un dropdown con las emisoras disponibles; cambia la selección y corre la celda siguiente para descargar su historial de dividendos.
 6. **Selector de año** — despliega un dropdown con los años que tienen distribuciones para el ticker elegido; cambia la selección y corre la celda siguiente para generar la ficha de rendimiento de ese año.
 7. **Ficha de rendimiento anual** y **ficha completa anual para el cliente** — cada una se genera en HTML, se muestra directamente en el notebook y se exporta a PDF en `output/fichas/` (ruta impresa en pantalla), usando el mismo ticker y año ya elegidos arriba.
+8. **Ficha de rendimiento y riesgo de los últimos 12 meses** — sección aparte, independiente del año elegido en el paso 6: define una fecha de referencia (`FECHA_REFERENCIA_12M`, `None` = hoy) y genera la misma ficha sencilla y la misma ficha completa, pero sobre la ventana móvil de los últimos 12 meses y con el riesgo del periodo agregado; también se exportan a PDF.
 
-Cada corrida relevante queda archivada en `output/` (CSV del índice, CSV de emisoras, CSV de dividendos y las fichas HTML de rendimiento y completa para el cliente) y en `output/fichas/` (los PDF de ambas fichas), con nombre `AAAAMMDD_HHMMSS_descripción` (HTML/CSV) o `AAAA-MM-DD_HHMM_TICKER_descripcion-breve_periodo` (PDF) para no sobrescribir corridas anteriores.
+Cada corrida relevante queda archivada en `output/` (CSV del índice, CSV de emisoras, CSV de dividendos y las fichas HTML de rendimiento y completa para el cliente, de año calendario o de ventana móvil de 12 meses) y en `output/fichas/` (los PDF de todas las fichas), con nombre `AAAAMMDD_HHMMSS_descripción` (HTML/CSV) o `AAAA-MM-DD_HHMM_TICKER_descripcion-breve_periodo` (PDF) para no sobrescribir corridas anteriores.
 
 ### Alternativa: `amefibra-indice-fibras.py`
 
@@ -139,12 +141,16 @@ venv/Scripts/python.exe -m pip install -r requirements.txt
 - **Nombres de archivo `AAAAMMDD_HHMMSS_descripción`:** el prefijo de fecha/hora (formato ordenable lexicográficamente) permite listar `output/` y ver las corridas en orden cronológico sin depender de la metadata del sistema de archivos, y evita que corridas repetidas se sobrescriban entre sí.
 - **PDF vía Playwright en vez de una librería nueva:** para exportar las fichas a PDF se reutiliza `page.pdf()` del mismo Chromium headless que ya usa el scraping del índice, en vez de agregar una dependencia adicional (p. ej. weasyprint o un binario externo como wkhtmltopdf). El nombre del PDF (`AAAA-MM-DD_HHMM_TICKER_descripcion-breve_periodo.pdf`) toma la fecha/hora del propio nombre del HTML de origen —el momento en que se consultaron los datos—, no el momento de la exportación ni la fecha de modificación en disco (que, igual que en el resto del proyecto, no es confiable).
 - **Cierres anuales cacheados solo para años cerrados:** la ficha de rendimiento y la ficha completa para el cliente consultan, segundos aparte, los mismos cierres del mismo ticker/año; cachear esa descarga en memoria evita duplicarla. El año en curso queda deliberadamente fuera del cache porque sus cierres cambian mientras avanza el año (el último cierre disponible es el "precio actual" de la ficha).
+- **Ventana móvil de 12 meses como modo adicional, no un reemplazo:** el año calendario sigue siendo el flujo por defecto y no se modificó; la ventana móvil vive en funciones y celdas separadas que reutilizan las mismas fichas (mismo HTML/CSS, mismos cálculos base), activadas con un parámetro (`fecha_referencia`) en vez de duplicar las funciones de ficha completas.
+- **Riesgo con retorno total mensual, no solo de precio:** la volatilidad del periodo se calcula sobre el retorno mensual total (variación de precio + dividendos pagados ese mes), porque es la volatilidad que efectivamente percibe quien invierte, no solo la del precio. Se reporta en su forma mensual en la ficha sencilla (más intuitiva) y anualizada (mensual × √12) en la ficha completa (más comparable con benchmarks de mercado).
+- **Caché de la ventana móvil con diccionario simple, no `functools.lru_cache`:** a diferencia del caché de cierres anuales (preexistente, sin problema conocido), el de la ventana móvil se implementó con un diccionario en memoria en vez de `@functools.lru_cache`. Se detectó que `%autoreload` de IPython puede dejar en un estado inconsistente una función envuelta por ese decorador (un objeto de C, no una función normal) cuando se le agregan funciones nuevas al módulo durante una sesión larga de notebook, produciendo un `NameError` intermitente que solo aparece en el kernel interactivo, nunca en una ejecución fresca.
+- **`annualized_yield_pct` puede quedar `NaN` con una sola distribución histórica:** anualizar un rendimiento requiere estimar el intervalo entre pagos, lo cual es indeterminado con un solo dato (típico de FIBRAs de IPO muy reciente). Se documentó como caso válido en vez de tratarlo como dato corrupto: la validación de `probar_historial_dividendos` solo exige ese campo poblado cuando hay dos o más distribuciones.
 
 <!-- COMPLETAR: agregar trade-offs adicionales que solo el autor conoce, por ejemplo: por qué Playwright y no Selenium/Puppeteer, por qué lanzar un navegador nuevo por ejecución en vez de mantener una sesión persistente, o por qué no se cachean/persisten los datos entre corridas más allá del historial en output/. No se pudo inferir del código porque no hay comentarios ni commits que lo documenten. -->
 
 ## Estado del proyecto
 
-Activo en proceso de desarrollo — historial de git con 21 commits hasta la fecha, actividad reciente centrada en migrar el script original a un notebook con `modules/` reutilizables, agregar la consulta de dividendos/ficha de rendimiento, el fallback de emisoras sin depender de AMEFIBRA, la ficha completa anual para el cliente y la exportación de ambas fichas a PDF.
+Activo en proceso de desarrollo — historial de git con 27 commits hasta la fecha, actividad reciente centrada en migrar el script original a un notebook con `modules/` reutilizables, agregar la consulta de dividendos/ficha de rendimiento, el fallback de emisoras sin depender de AMEFIBRA, la ficha completa anual para el cliente, la exportación de ambas fichas a PDF, corregir el contraste de texto de las fichas, y agregar la variante de ventana móvil de últimos 12 meses con riesgo mensual/anualizado.
 
 ## Autor / Rol
 
