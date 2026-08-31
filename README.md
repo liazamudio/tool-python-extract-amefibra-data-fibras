@@ -1,6 +1,6 @@
 # AMEFIBRA Índice FIBRAS — Notebook de extracción y análisis
 
-Notebook de Jupyter (con su equivalente en script `.py`) que extrae el Índice FIBRAS de AMEFIBRA en tiempo real, consulta el listado de emisoras, descarga el historial de dividendos de cada FIBRA vía `yfinance`, genera una ficha de rendimiento anual (dividendos + variación de capital) y una ficha completa anual para el cliente por ticker, exporta ambas a PDF con nombre de archivo estandarizado, y ofrece además una variante de ambas fichas sobre una ventana móvil de los últimos 12 meses con el riesgo mensual del periodo (volatilidad del retorno total mensual).
+Notebook de Jupyter (con su equivalente en script `.py`) que extrae el Índice FIBRAS de AMEFIBRA en tiempo real, consulta el listado de emisoras, descarga el historial de dividendos de cada FIBRA vía `yfinance`, genera una ficha de rendimiento anual (dividendos + variación de capital) y una ficha completa anual para el cliente por ticker, exporta ambas a PDF con nombre de archivo estandarizado, ofrece además una variante de ambas fichas sobre una ventana móvil de los últimos 12 meses con el riesgo mensual del periodo (volatilidad del retorno total mensual), y una ficha comparativa que evalúa rendimiento y riesgo del ticker en 5 ventanas de tiempo a la vez (1/2/5/10 años e histórico).
 
 <!-- COMPLETAR: agregar un GIF o captura de pantalla mostrando una corrida del notebook (tabla del índice, selector de ticker/año y la ficha HTML de rendimiento). No se pudo generar automáticamente porque requiere una grabación de pantalla. -->
 
@@ -23,6 +23,7 @@ Además, ninguna fuente pública ofrece una API homogénea y gratuita de histori
 - **Procesamiento de datos:** [pandas](https://pandas.pydata.org/) + [lxml](https://lxml.de/) (parseo de la tabla HTML renderizada)
 - **Widgets interactivos:** [ipywidgets](https://ipywidgets.readthedocs.io/) — selectores de ticker y año dentro del notebook
 - **Exportación:** [openpyxl](https://openpyxl.readthedocs.io/) (Excel `.xlsx`), CSV nativo de pandas, HTML para las fichas y PDF (vía `page.pdf()` de Playwright, reutilizando el mismo Chromium headless ya usado para el scraping, sin dependencias adicionales)
+- **Tasa libre de riesgo (ratio tipo Sharpe):** [API SIE de Banxico](https://www.banxico.org.mx/SieAPIRest/service/v1/) (serie `SF43936`, CETES 28 días) vía `requests`, con un token personal gratuito opcional (ver "Variables de entorno")
 - **Base de datos:** No aplica — el notebook no persiste datos en una BD, solo exporta a archivos locales en `output/`
 - **Infraestructura/Deploy:** No aplica — notebook/script de ejecución local, sin pipeline de CI/CD ni despliegue configurado en el repositorio
 
@@ -40,6 +41,8 @@ Además, ninguna fuente pública ofrece una API homogénea y gratuita de histori
 - **Variante de ventana móvil de últimos 12 meses:** alternativa al año calendario que coexiste con él (no lo reemplaza) — calcula el rendimiento sobre los 12 meses completos más recientes contados desde una fecha de referencia configurable (por defecto, hoy), y agrega el **riesgo del periodo**: la volatilidad del retorno total mensual (variación de precio + dividendos de cada mes), mostrada como cifra destacada en la ficha sencilla (versión mensual) y como volatilidad anualizada más una gráfica de barras de los 12 retornos mensuales (verde/rojo según el signo) en la ficha completa
 - Exporta ambas fichas —de año calendario o de ventana móvil de 12 meses— a PDF en `output/fichas/`, con nombre de archivo estandarizado (`AAAA-MM-DD_HHMM_TICKER_descripcion-breve_periodo.pdf`) que permite identificarlas y ordenarlas cronológicamente sin abrirlas
 - Cachea en memoria los cierres (anuales o de la ventana móvil) ya cerrados, para no volver a descargar de Yahoo Finance los mismos precios cuando se generan varias fichas del mismo ticker/periodo en una misma corrida (el periodo en curso —el año actual, o una ventana que termina hoy— nunca se cachea, porque sus cierres siguen cambiando)
+- **Ficha comparativa multi-periodo:** evalúa el ticker elegido en 5 ventanas de tiempo a la vez (último año, últimos 2/5/10 años e histórico desde el primer precio disponible), con 13 indicadores por ventana — rendimiento anual (CAGR) y mensual, riesgo anual y mensual, drawdown máximo, ratio tipo Sharpe (usando CETES 28 días de Banxico como tasa libre de riesgo), plusvalía/dividendos/ganancia total acumulados (en MXN y en %) y número de pagos. Un lapso sin historial suficiente para cubrirse completo se omite (no se muestra en cero ni vacío), documentado en una nota al pie; se exporta como HTML responsivo (tarjetas que se acomodan solas al ancho de pantalla) a `output/`
+- Sin un token de Banxico configurado (opcional, gratuito), la ficha comparativa se genera igual: el ratio tipo Sharpe queda como "N/D" en vez de bloquear el resto de los indicadores
 - Exporta opcionalmente el índice completo a CSV compatible con Excel (`utf-8-sig`) y/o XLSX
 - Solo lee información pública ya publicada en las páginas/fuentes consultadas, sin credenciales ni endpoints privados
 
@@ -51,8 +54,8 @@ tool-python-extract-amefibra-data-fibras/
 ├── amefibra-indice-fibras.py      # Mismo contenido exportado en formato "percent" (# %%), para correr celda por celda desde un editor sin abrir el .ipynb
 ├── modules/                       # Lógica reutilizable importada por el notebook (mantiene las celdas simples)
 │   ├── __init__.py
-│   ├── extraccion.py              # Scraping del índice (Playwright) y descarga de dividendos/precios (yfinance)
-│   ├── procesamiento.py           # Normalización de DataFrames (snake_case, tipos, periodicidad), ventana móvil de 12 meses y riesgo mensual
+│   ├── extraccion.py              # Scraping del índice (Playwright), dividendos/precios (yfinance) y CETES 28 días (Banxico)
+│   ├── procesamiento.py           # Normalización de DataFrames, ventana móvil de 12 meses, riesgo mensual y tabla comparativa multi-periodo
 │   └── presentacion.py            # Despliegue en notebook, fichas HTML/PDF y exportación a CSV/XLSX, selectores interactivos
 ├── output/                        # Generado en cada corrida (CSV/XLSX/HTML); no versionado, ver .gitignore
 │   └── fichas/                    # PDFs exportados de las fichas, con nombre de archivo estandarizado
@@ -87,7 +90,7 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-Variables de entorno: no aplica — el notebook no requiere configuración por variables de entorno ni credenciales.
+Variables de entorno: ninguna es obligatoria. Opcionalmente, `BANXICO_SIE_TOKEN` habilita el ratio tipo Sharpe de la ficha comparativa multi-periodo (tasa de CETES 28 días vía la API SIE de Banxico); se obtiene gratis en el [token de Banxico SIE](https://www.banxico.org.mx/SieAPIRest/service/v1/token) (solo pide un correo). Sin ella, esa ficha se genera igual y ese indicador queda como "N/D".
 
 ### Ejecutar el notebook
 
@@ -101,8 +104,9 @@ Abre `amefibra-indice-fibras.ipynb` en VS Code (extensión Jupyter) o Jupyter La
 6. **Selector de año** — despliega un dropdown con los años que tienen distribuciones para el ticker elegido; cambia la selección y corre la celda siguiente para generar la ficha de rendimiento de ese año.
 7. **Ficha de rendimiento anual** y **ficha completa anual para el cliente** — cada una se genera en HTML, se muestra directamente en el notebook y se exporta a PDF en `output/fichas/` (ruta impresa en pantalla), usando el mismo ticker y año ya elegidos arriba.
 8. **Ficha de rendimiento y riesgo de los últimos 12 meses** — sección aparte, independiente del año elegido en el paso 6: define una fecha de referencia (`FECHA_REFERENCIA_12M`, `None` = hoy) y genera la misma ficha sencilla y la misma ficha completa, pero sobre la ventana móvil de los últimos 12 meses y con el riesgo del periodo agregado; también se exportan a PDF.
+9. **Ficha comparativa multi-periodo** — otra sección aparte: para el mismo ticker ya elegido, compara rendimiento y riesgo en 5 ventanas de tiempo a la vez (1A/2A/5A/10A/Histórico) y muestra la tabla en el notebook, exportándola también como HTML responsivo en `output/`.
 
-Cada corrida relevante queda archivada en `output/` (CSV del índice, CSV de emisoras, CSV de dividendos y las fichas HTML de rendimiento y completa para el cliente, de año calendario o de ventana móvil de 12 meses) y en `output/fichas/` (los PDF de todas las fichas), con nombre `AAAAMMDD_HHMMSS_descripción` (HTML/CSV) o `AAAA-MM-DD_HHMM_TICKER_descripcion-breve_periodo` (PDF) para no sobrescribir corridas anteriores.
+Cada corrida relevante queda archivada en `output/` (CSV del índice, CSV de emisoras, CSV de dividendos, las fichas HTML de rendimiento y completa para el cliente —de año calendario o de ventana móvil de 12 meses— y la ficha comparativa multi-periodo) y en `output/fichas/` (los PDF de las fichas de un solo periodo), con nombre `AAAAMMDD_HHMMSS_descripción` (HTML/CSV) o `AAAA-MM-DD_HHMM_TICKER_descripcion-breve_periodo` (PDF) para no sobrescribir corridas anteriores.
 
 ### Alternativa: `amefibra-indice-fibras.py`
 
@@ -145,12 +149,16 @@ venv/Scripts/python.exe -m pip install -r requirements.txt
 - **Riesgo con retorno total mensual, no solo de precio:** la volatilidad del periodo se calcula sobre el retorno mensual total (variación de precio + dividendos pagados ese mes), porque es la volatilidad que efectivamente percibe quien invierte, no solo la del precio. Se reporta en su forma mensual en la ficha sencilla (más intuitiva) y anualizada (mensual × √12) en la ficha completa (más comparable con benchmarks de mercado).
 - **Caché de la ventana móvil con diccionario simple, no `functools.lru_cache`:** a diferencia del caché de cierres anuales (preexistente, sin problema conocido), el de la ventana móvil se implementó con un diccionario en memoria en vez de `@functools.lru_cache`. Se detectó que `%autoreload` de IPython puede dejar en un estado inconsistente una función envuelta por ese decorador (un objeto de C, no una función normal) cuando se le agregan funciones nuevas al módulo durante una sesión larga de notebook, produciendo un `NameError` intermitente que solo aparece en el kernel interactivo, nunca en una ejecución fresca.
 - **`annualized_yield_pct` puede quedar `NaN` con una sola distribución histórica:** anualizar un rendimiento requiere estimar el intervalo entre pagos, lo cual es indeterminado con un solo dato (típico de FIBRAs de IPO muy reciente). Se documentó como caso válido en vez de tratarlo como dato corrupto: la validación de `probar_historial_dividendos` solo exige ese campo poblado cuando hay dos o más distribuciones.
+- **CAGR de la ficha multi-periodo con dividendos como efectivo, no reinvertidos:** el valor final usado para el CAGR es `precio final + dividendos acumulados del lapso` (suma simple), no un modelo de reinversión nocional que compraría más títulos con cada pago. Es la misma convención que ya usa el resto de las fichas del proyecto (ninguna simula recompra de títulos), elegida por consistencia y simplicidad sobre un modelo de reinversión que añadiría supuestos adicionales (¿se reinvierte al precio de ese día? ¿con qué frecuencia?) sin un beneficio claro para el objetivo de la ficha.
+- **Volatilidad con desviación estándar muestral (`ddof=1`):** tanto la ficha de 12 meses como la multi-periodo usan el `ddof=1` que ya es el default de `pandas.Series.std()`, sin cambiarlo a poblacional (`ddof=0`); es la convención más común para series de retornos financieros, que se tratan como una muestra del comportamiento del activo, no como la población completa de sus retornos posibles.
+- **CETES 28 días vía Banxico, con degradación explícita si no está disponible:** es la fuente oficial de esa tasa en México, pero su API exige un token personal (gratuito, pero no se puede obtener de forma automatizada). En vez de bloquear toda la ficha comparativa multi-periodo por un solo indicador, `armar_tabla_multiperiodo` captura la falla (`CetesNoDisponibleError` u otra excepción de red) y deja el ratio tipo Sharpe en `NaN` ("N/D" en la ficha) con una nota al pie explicando por qué, calculando con normalidad los otros 12 indicadores.
+- **Lapsos fijos omitidos por completo, no en cero:** un lapso (1A/2A/5A/10A) requiere que el primer precio disponible del ticker sea anterior a su fecha de inicio; si no, se omite esa fila entera de la tabla comparativa (documentado como nota), en vez de mostrar un lapso con datos parciales o ceros que podrían confundirse con un rendimiento real de 0%.
 
 <!-- COMPLETAR: agregar trade-offs adicionales que solo el autor conoce, por ejemplo: por qué Playwright y no Selenium/Puppeteer, por qué lanzar un navegador nuevo por ejecución en vez de mantener una sesión persistente, o por qué no se cachean/persisten los datos entre corridas más allá del historial en output/. No se pudo inferir del código porque no hay comentarios ni commits que lo documenten. -->
 
 ## Estado del proyecto
 
-Activo en proceso de desarrollo — historial de git con 27 commits hasta la fecha, actividad reciente centrada en migrar el script original a un notebook con `modules/` reutilizables, agregar la consulta de dividendos/ficha de rendimiento, el fallback de emisoras sin depender de AMEFIBRA, la ficha completa anual para el cliente, la exportación de ambas fichas a PDF, corregir el contraste de texto de las fichas, y agregar la variante de ventana móvil de últimos 12 meses con riesgo mensual/anualizado.
+Activo en proceso de desarrollo — historial de git con 27 commits hasta la fecha, actividad reciente centrada en migrar el script original a un notebook con `modules/` reutilizables, agregar la consulta de dividendos/ficha de rendimiento, el fallback de emisoras sin depender de AMEFIBRA, la ficha completa anual para el cliente, la exportación de ambas fichas a PDF, corregir el contraste de texto de las fichas, agregar la variante de ventana móvil de últimos 12 meses con riesgo mensual/anualizado, y la ficha comparativa multi-periodo (1A/2A/5A/10A/Histórico) con CAGR, riesgo, drawdown máximo y ratio tipo Sharpe (CETES 28 días vía Banxico).
 
 ## Autor / Rol
 

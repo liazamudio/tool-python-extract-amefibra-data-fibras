@@ -16,12 +16,15 @@ from .extraccion import (
     URL_PAGINA,
     _descargar_cierres_anuales,
     _descargar_cierres_rango,
+    _descargar_historico_completo,
     ejecutar_con_playwright_sync,
+    obtener_cetes_28d,
     obtener_distribuciones,
     obtener_tabla_fibras_en_notebook,
 )
 from .procesamiento import (
     _normalizar_ticker,
+    armar_tabla_multiperiodo,
     calcular_riesgo_mensual,
     calcular_ventana_movil_12_meses,
     normalizar_para_analisis,
@@ -531,6 +534,163 @@ table.resumen td.valor{{text-align:right;font-weight:600}}
     momento = datetime.now()
     ruta = carpeta_salida / f"{momento:%Y%m%d_%H%M%S}_{ticker_base}_{sufijo_archivo}_ficha_completa_cliente.html"
     ruta.write_text(html, encoding="utf-8")
+    return ruta
+
+
+_ETIQUETAS_INDICADORES_MULTIPERIODO = [
+    ("periodo", "Periodo"),
+    ("rendimiento_anual_pct", "Rendimiento anual (CAGR)"),
+    ("rendimiento_mensual_pct", "Rendimiento mensual"),
+    ("riesgo_anual_pct", "Riesgo anual"),
+    ("riesgo_mensual_pct", "Riesgo mensual"),
+    ("drawdown_maximo_pct", "Drawdown máximo"),
+    ("ratio_sharpe", "Ratio tipo Sharpe"),
+    ("tasa_cetes_pct", "CETES 28d usado"),
+    ("plusvalia_mxn", "Plusvalía acumulada"),
+    ("dividendos_mxn", "Dividendos acumulados"),
+    ("ganancia_total_mxn", "Ganancia total"),
+    ("pct_plusvalia", "% Plusvalía"),
+    ("pct_dividendos", "% Dividendos"),
+    ("pct_ganancia_total", "% Ganancia total"),
+    ("num_pagos", "Núm. pagos"),
+]
+
+
+def _formatear_indicador_multiperiodo(clave: str, fila: pd.Series) -> str:
+    """Formatea un indicador de la tabla multi-periodo para mostrarse en la ficha HTML."""
+    if clave == "periodo":
+        return f"{fila['fecha_inicio']} a {fila['fecha_fin']}"
+    valor = fila[clave]
+    if pd.isna(valor):
+        return "N/D"
+    if clave == "num_pagos":
+        return f"{int(valor)}"
+    if clave.endswith("_mxn"):
+        signo = "-" if valor < 0 else ""
+        return f"{signo}${abs(valor):,.2f} MXN"
+    if clave == "ratio_sharpe":
+        return f"{valor:,.2f}"
+    return f"{valor:,.2f}%"
+
+
+def _renderizar_ficha_multiperiodo(ticker_base: str, tabla: pd.DataFrame, notas: list[str]) -> str:
+    """Arma el HTML responsivo de la ficha comparativa multi-periodo: una tarjeta por lapso.
+
+    Las tarjetas se acomodan en una cuadrícula que se ajusta sola al ancho disponible
+    (`grid-template-columns: repeat(auto-fit, minmax(...))`), por lo que se ven varias
+    columnas en escritorio y una sola en celular, sin scroll horizontal ni zoom.
+    """
+    tarjetas = []
+    for lapso, fila in tabla.iterrows():
+        filas_html = "".join(
+            f'<div class="fila"><span class="etiqueta">{escape(etiqueta)}</span>'
+            f'<span class="valor">{escape(_formatear_indicador_multiperiodo(clave, fila))}</span></div>'
+            for clave, etiqueta in _ETIQUETAS_INDICADORES_MULTIPERIODO
+        )
+        tarjetas.append(f'<div class="tarjeta"><h2>{escape(str(lapso))}</h2>{filas_html}</div>')
+
+    notas_html = (
+        f'<div class="notas"><strong>Notas:</strong><ul>{"".join(f"<li>{escape(n)}</li>" for n in notas)}</ul></div>'
+        if notas
+        else ""
+    )
+
+    return f"""<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ficha multi-periodo {escape(ticker_base)}</title>
+<style>
+body{{margin:0;background:#12201e;color:#e8ede9;font-family:Georgia,serif}}
+main{{max-width:1100px;margin:32px auto;padding:32px;background:#1b2926;color:#e8ede9;box-shadow:0 8px 24px #00000066}}
+h1{{margin:0 0 6px;font-size:32px;color:#e8ede9}}
+.subtitle{{color:#8ba39c;margin-bottom:24px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}}
+.tarjeta{{background:#1e352e;border-top:3px solid #d8a24a;border-radius:6px;padding:16px}}
+.tarjeta h2{{margin:0 0 10px;font-size:20px;color:#e8ede9}}
+.fila{{display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px solid #30423e;font:14px sans-serif}}
+.fila:last-child{{border-bottom:none}}
+.etiqueta{{color:#8ba39c}}
+.valor{{color:#e8ede9;font-weight:600;text-align:right}}
+.notas{{margin-top:24px;font:13px sans-serif;color:#9db3ac}}
+.notas ul{{margin:6px 0 0;padding-left:20px}}
+.notice{{margin-top:28px;font:12px sans-serif;color:#8ba39c}}
+@media(max-width:650px){{main{{margin:0;padding:20px}}h1{{font-size:26px}}}}
+</style></head><body><main>
+<h1>Ficha comparativa de rendimiento multi-periodo: {escape(ticker_base)}</h1>
+<div class="subtitle">Rendimiento y riesgo en distintas ventanas de tiempo</div>
+<div class="grid">{"".join(tarjetas)}</div>
+{notas_html}
+<div class="notice">Ficha informativa basada en datos históricos. Los pagos se identifican por ex_date. No constituye una recomendación de compra o venta; el rendimiento pasado no garantiza resultados futuros. El riesgo y el ratio tipo Sharpe mostrados son históricos y tampoco deben interpretarse como predictores de riesgo o rendimiento futuro.</div>
+</main></body></html>"""
+
+
+def crear_ficha_multiperiodo(
+    ticker: str,
+    carpeta_salida: Path,
+    historial: Optional[pd.DataFrame] = None,
+    fecha_referencia: Optional[datetime] = None,
+) -> tuple[pd.DataFrame, Path]:
+    """Calcula y exporta la ficha comparativa de rendimiento y riesgo de `ticker` en 5 ventanas
+    de tiempo (1A, 2A, 5A, 10A e Histórico), y la deja lista para mostrarse en el notebook.
+
+    A diferencia de las demás fichas del proyecto (año calendario o ventana móvil de
+    12 meses, un solo periodo cada una), esta compara varias ventanas simultáneamente
+    para dar una lectura rápida de corto/mediano/largo plazo (ver
+    `procesamiento.armar_tabla_multiperiodo` para el detalle de los 13 indicadores
+    por lapso y la regla de qué lapsos se omiten por falta de historial). Descarga el
+    historial de precios COMPLETO del ticker (desde su primer dato disponible en
+    Yahoo Finance), porque el lapso "Histórico" y la regla de aplicabilidad de los
+    demás lapsos lo requieren.
+
+    El ratio tipo Sharpe usa CETES 28 días (`extraccion.obtener_cetes_28d`) como tasa
+    libre de riesgo. Si no hay token de Banxico configurado (variable de entorno
+    `BANXICO_SIE_TOKEN`) o la API falla, ese indicador queda en NaN ("N/D" en la
+    ficha) para todos los lapsos, con una nota al pie explicando por qué — el resto
+    de la ficha se genera con normalidad, no se bloquea por ese único indicador.
+
+    Devuelve `(tabla, ruta)`: `tabla` es el DataFrame para mostrarse en el notebook;
+    `ruta` es el HTML exportado a `carpeta_salida`.
+    """
+    ticker_base = _normalizar_ticker(ticker)
+    historial = historial if historial is not None else obtener_distribuciones(ticker_base, carpeta_salida)
+    requerido = {"ticker", "ex_date", "amount_mxn"}
+    faltantes = requerido.difference(historial.columns)
+    if faltantes:
+        raise ValueError(f"Faltan columnas en el historial: {sorted(faltantes)}")
+
+    precios_historicos = _descargar_historico_completo(f"{ticker_base}.MX")
+
+    def _tasa_cetes_promedio(fecha_inicio: pd.Timestamp, fecha_fin: pd.Timestamp) -> float:
+        serie = obtener_cetes_28d(fecha_inicio, fecha_fin)
+        return float(serie.mean())
+
+    tabla, notas = armar_tabla_multiperiodo(
+        ticker_base,
+        precios_historicos,
+        historial,
+        fecha_referencia=fecha_referencia,
+        obtener_tasa_cetes=_tasa_cetes_promedio,
+    )
+
+    html = _renderizar_ficha_multiperiodo(ticker_base, tabla, notas)
+    carpeta_salida.mkdir(parents=True, exist_ok=True)
+    momento = datetime.now()
+    ruta = carpeta_salida / f"{momento:%Y%m%d_%H%M%S}_{ticker_base}_rendimiento-multiperiodo.html"
+    ruta.write_text(html, encoding="utf-8")
+    return tabla, ruta
+
+
+def mostrar_ficha_multiperiodo(
+    ticker: str,
+    carpeta_salida: Path,
+    historial: Optional[pd.DataFrame] = None,
+    fecha_referencia: Optional[datetime] = None,
+) -> Path:
+    """Genera la ficha comparativa multi-periodo con `crear_ficha_multiperiodo` y la muestra en el notebook."""
+    tabla, ruta = crear_ficha_multiperiodo(ticker, carpeta_salida, historial, fecha_referencia)
+    ticker_base = _normalizar_ticker(ticker)
+    print(f"Ficha comparativa de rendimiento multi-periodo: {ticker_base}")
+    print(f"Ficha multi-periodo generada: {ruta}")
+    display(tabla)
     return ruta
 
 

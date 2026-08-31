@@ -9,6 +9,7 @@ import asyncio
 import concurrent.futures
 import functools
 import io
+import os
 import re
 import sys
 import time
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Callable, Optional, TypeVar
 
 import pandas as pd
+import requests
 import yfinance as yf
 from playwright.sync_api import TimeoutError as PWTimeout
 from playwright.sync_api import sync_playwright
@@ -235,6 +237,25 @@ def _descargar_cierres_rango_sin_cachear(ticker_yahoo: str, inicio: pd.Timestamp
     return cierres
 
 
+def _descargar_historico_completo(ticker_yahoo: str) -> pd.Series:
+    """Cierres diarios de `ticker_yahoo` desde el primer dato disponible en Yahoo Finance hasta hoy.
+
+    Usada por la ficha comparativa multi-periodo (lapso "Histórico" y para acotar
+    qué otros lapsos son aplicables según cuánto historial tiene el ticker). No se
+    cachea: se descarga una sola vez por corrida de esa ficha.
+    """
+    precios = yf.download(ticker_yahoo, period="max", auto_adjust=False, progress=False, threads=False)
+    if precios is None or precios.empty:
+        raise ValueError(f"No hay precios históricos disponibles para {ticker_yahoo}.")
+    if isinstance(precios.columns, pd.MultiIndex):
+        precios.columns = precios.columns.get_level_values(0)
+    if "Close" not in precios:
+        raise ValueError(f"La respuesta de precios de {ticker_yahoo} no contiene cierre.")
+    cierres = precios["Close"].dropna()
+    cierres.index = pd.to_datetime(cierres.index).tz_localize(None).normalize()
+    return cierres
+
+
 def obtener_distribuciones(ticker: str, carpeta_salida: Path, intentos: int = 3) -> pd.DataFrame:
     """Obtiene distribuciones históricas de una FIBRA BMV y las exporta a `carpeta_salida`."""
     ticker_base = _normalizar_ticker(ticker)
@@ -297,3 +318,53 @@ def obtener_distribuciones(ticker: str, carpeta_salida: Path, intentos: int = 3)
     resultado.to_csv(ruta, index=False, encoding="utf-8")
     resultado.attrs["ruta_csv"] = ruta
     return resultado
+
+
+# --- CETES 28 días (Banxico), para la tasa libre de riesgo del ratio tipo Sharpe ---
+
+URL_BANXICO_SIE = "https://www.banxico.org.mx/SieAPIRest/service/v1/series"
+# CETES 28 días, tasa de rendimiento en subasta primaria (% anualizado).
+SERIE_CETES_28D = "SF43936"
+VARIABLE_ENTORNO_TOKEN_BANXICO = "BANXICO_SIE_TOKEN"
+
+
+class CetesNoDisponibleError(RuntimeError):
+    """La tasa de CETES 28 días no se pudo obtener (sin token de Banxico, o falla de red/API).
+
+    Se distingue de otros errores para que quien calcule el ratio tipo Sharpe pueda
+    degradar con el criterio documentado (dejar el ratio en NaN, con una nota) en vez
+    de tronar toda la ficha multi-periodo por un solo indicador.
+    """
+
+
+def obtener_cetes_28d(fecha_inicio: pd.Timestamp, fecha_fin: pd.Timestamp) -> pd.Series:
+    """Tasa de rendimiento de CETES 28 días (% anualizado) entre `fecha_inicio` y `fecha_fin`.
+
+    Fuente: API SIE de Banxico (serie `SF43936`), la fuente oficial de esta tasa en
+    México. Requiere un token personal gratuito (se obtiene en
+    https://www.banxico.org.mx/SieAPIRest/service/v1/token), leído de la variable de
+    entorno `BANXICO_SIE_TOKEN`; no se pide interactivamente ni se guarda en el
+    repositorio. Sin ese token, o si la API falla, se lanza `CetesNoDisponibleError`
+    en vez de inventar una tasa.
+    """
+    token = os.environ.get(VARIABLE_ENTORNO_TOKEN_BANXICO)
+    if not token:
+        raise CetesNoDisponibleError(
+            f"No hay token de Banxico configurado (variable de entorno {VARIABLE_ENTORNO_TOKEN_BANXICO}). "
+            "Se obtiene gratis en https://www.banxico.org.mx/SieAPIRest/service/v1/token."
+        )
+    url = f"{URL_BANXICO_SIE}/{SERIE_CETES_28D}/datos/{fecha_inicio:%Y-%m-%d}/{fecha_fin:%Y-%m-%d}"
+    try:
+        respuesta = requests.get(url, headers={"Bmx-Token": token}, timeout=30)
+        respuesta.raise_for_status()
+        datos = respuesta.json()["bmx"]["series"][0]["datos"]
+    except Exception as error:
+        raise CetesNoDisponibleError(f"No se pudo obtener CETES 28 días de Banxico: {error}") from error
+
+    serie = pd.DataFrame(datos)
+    serie["fecha"] = pd.to_datetime(serie["fecha"], format="%d/%m/%Y")
+    serie["dato"] = pd.to_numeric(serie["dato"], errors="coerce")
+    serie = serie.dropna(subset=["dato"]).set_index("fecha")["dato"].sort_index()
+    if serie.empty:
+        raise CetesNoDisponibleError(f"Banxico no devolvió datos de CETES 28 días entre {fecha_inicio:%Y-%m-%d} y {fecha_fin:%Y-%m-%d}.")
+    return serie

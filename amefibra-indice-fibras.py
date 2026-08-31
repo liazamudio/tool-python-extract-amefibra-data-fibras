@@ -207,3 +207,14 @@ ruta_pdf_completa_12m = exportar_ficha_a_pdf(
     ruta_ficha_completa_12m, TICKER_SELECCIONADO, "ficha completa 12 meses", f"{FECHA_FIN_12M:%Y%m%d}", CARPETA_FICHAS_PDF
 )
 print(f"PDF generado: {ruta_pdf_completa_12m}")
+
+# %% [markdown]
+# ## ANÁLISIS DE DISTINTOS PERIODOS
+#
+# Ficha comparativa de rendimiento y riesgo del ticker elegido en 5 ventanas de tiempo a la vez (último año, últimos 2/5/10 años e histórico desde el primer precio disponible), en vez de un solo periodo. Un lapso se omite por completo si el ticker no tiene historial suficiente para cubrirlo (se documenta como nota, no como fila vacía o en cero). El ratio tipo Sharpe usa CETES 28 días (fuente: Banxico) como tasa libre de riesgo; requiere un token gratuito de Banxico en la variable de entorno `BANXICO_SIE_TOKEN` — sin él, ese indicador queda en "N/D" con una nota, y el resto de la ficha se genera igual. Es informativa y no constituye una recomendación de inversión.
+
+# %%
+# Generamos la ficha comparativa multi-periodo y la mostramos en el notebook
+from modules.presentacion import mostrar_ficha_multiperiodo
+
+ruta_ficha_multiperiodo = mostrar_ficha_multiperiodo(TICKER_SELECCIONADO, CARPETA_SALIDA, historial_dividendos)
