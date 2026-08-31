@@ -202,13 +202,18 @@ def _calcular_indicadores_ventana(
     fecha_inicio: pd.Timestamp,
     fecha_fin: pd.Timestamp,
     tasa_cetes_pct: Optional[float],
+    retornos_todos: pd.Series,
 ) -> dict:
     """Calcula los 13 indicadores de rendimiento/riesgo del lapso `etiqueta` (ver Paso 2 del prompt).
 
     `precios_historicos` y `pagos_historicos` son el historial COMPLETO del ticker
     (no recortado al lapso): esta función hace el recorte internamente y, para la
     volatilidad mensual, necesita datos de antes de `fecha_inicio` para tener una
-    base del primer retorno del lapso.
+    base del primer retorno del lapso. `retornos_todos` es el resultado ya calculado
+    de `_retornos_totales_mensuales(precios_historicos, pagos_historicos, fecha_fin)`:
+    es el mismo para los 5 lapsos de una misma corrida (todos comparten `fecha_fin`),
+    así que `armar_tabla_multiperiodo` lo calcula una sola vez en vez de repetirlo
+    por cada lapso.
     """
     precios_ventana = precios_historicos[
         (precios_historicos.index >= fecha_inicio) & (precios_historicos.index <= fecha_fin)
@@ -240,7 +245,6 @@ def _calcular_indicadores_ventana(
     # lapso (posible en el lapso "Histórico" de un ticker recién listado), queda NaN
     # en vez de tronar toda la tabla por un lapso que de por sí ya es un caso límite.
     try:
-        retornos_todos = _retornos_totales_mensuales(precios_historicos, pagos_historicos, fecha_fin)
         retornos_ventana = retornos_todos[retornos_todos.index >= fecha_inicio]
         riesgo_mensual_pct = float(retornos_ventana.std() * 100) if len(retornos_ventana) >= 2 else float("nan")
     except Exception:
@@ -319,6 +323,17 @@ def armar_tabla_multiperiodo(
     if "ticker" in pagos_historicos.columns:
         pagos_historicos = pagos_historicos[pagos_historicos["ticker"].astype(str).str.upper() == ticker_base]
 
+    # Los 5 lapsos comparten la misma `fecha_fin`, así que los retornos mensuales del
+    # historial completo (usados para la volatilidad de cada lapso) son idénticos para
+    # los 5: se calculan una sola vez en vez de repetir el resample/agrupación 5 veces.
+    # Si el cálculo falla (datos de precios/pagos con alguna forma inesperada), se
+    # degrada a una serie vacía en vez de tronar toda la tabla: cada lapso ya maneja
+    # "sin suficientes retornos" dejando su riesgo/Sharpe en NaN.
+    try:
+        retornos_todos = _retornos_totales_mensuales(precios_historicos, pagos_historicos, fecha_fin)
+    except Exception:
+        retornos_todos = pd.Series(dtype=float)
+
     filas = []
     notas = []
     aviso_cetes_ya_dado = False
@@ -346,7 +361,9 @@ def armar_tabla_multiperiodo(
                     aviso_cetes_ya_dado = True
 
         filas.append(
-            _calcular_indicadores_ventana(etiqueta, precios_historicos, pagos_historicos, fecha_inicio, fecha_fin, tasa_cetes_pct)
+            _calcular_indicadores_ventana(
+                etiqueta, precios_historicos, pagos_historicos, fecha_inicio, fecha_fin, tasa_cetes_pct, retornos_todos
+            )
         )
 
     if not filas:
