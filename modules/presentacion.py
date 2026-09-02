@@ -871,15 +871,40 @@ def seleccionar_ticker_interactivo(emisoras: pd.Series, valor_simulado: Optional
 # --- Análisis de múltiples FIBRAs a la vez ---
 
 
+class _SelectorTickersMultiple(widgets.VBox):
+    """Lista de casillas (`Checkbox`), una por ticker, para elegir varias FIBRAs a la vez.
+
+    Se usa en vez de `ipywidgets.SelectMultiple` porque en ese control hay que hacer
+    Ctrl/Shift+clic para marcar más de una opción (poco evidente, y en algunos
+    frontends un clic normal deselecciona el resto). Con una casilla por ticker,
+    marcar varias es un clic por cada una, sin combinaciones de teclado.
+
+    Expone `.value` como la tupla de tickers marcados, en el orden del listado, para
+    que las celdas siguientes lo lean igual que a los demás selectores del notebook.
+    """
+
+    def __init__(self, tickers: list[str], seleccionados_iniciales: list[str]) -> None:
+        self._casillas = [
+            widgets.Checkbox(value=(ticker in seleccionados_iniciales), description=ticker, indent=False)
+            for ticker in tickers
+        ]
+        encabezado = widgets.HTML("<b>Tickers a analizar</b> (marca una o varias):")
+        super().__init__([encabezado, *self._casillas])
+
+    @property
+    def value(self) -> tuple[str, ...]:
+        return tuple(casilla.description for casilla in self._casillas if casilla.value)
+
+
 def seleccionar_tickers_interactivo(
     emisoras: pd.Series, valores_simulados: Optional[list[str]] = None
-) -> widgets.SelectMultiple:
+) -> "_SelectorTickersMultiple":
     """Despliega un widget de selección MÚLTIPLE para elegir entre 1 y N tickers en un solo paso.
 
     Análogo a `seleccionar_ticker_interactivo`, pero permite analizar varias FIBRAs
-    a la vez (N = total de emisoras listadas). Como el listado de opciones no tiene
-    duplicados, el propio control impide repetir una emisora, así que no hace falta
-    un ciclo de rechazo/reintento. La validación de "al menos 1 ticker" se hace al
+    a la vez (N = total de emisoras listadas): muestra una casilla por ticker y se
+    pueden marcar varias con un clic cada una. Como el listado no tiene duplicados,
+    no se puede repetir una emisora. La validación de "al menos 1 ticker" se hace al
     leer la selección en `armar_tabla_tickers_seleccionados` (una celda después),
     siguiendo el mismo patrón de los demás selectores del notebook.
 
@@ -894,12 +919,7 @@ def seleccionar_tickers_interactivo(
     invalidos = [t for t in valores_simulados if t not in tickers_disponibles]
     if invalidos:
         raise ValueError(f"Estos tickers no están en el listado: {invalidos}. Tickers válidos: {tickers_disponibles}.")
-    selector = widgets.SelectMultiple(
-        options=tickers_disponibles,
-        value=tuple(valores_simulados),
-        description="Tickers:",
-        rows=min(len(tickers_disponibles), 15),
-    )
+    selector = _SelectorTickersMultiple(tickers_disponibles, valores_simulados)
     display(selector)
     return selector
 
