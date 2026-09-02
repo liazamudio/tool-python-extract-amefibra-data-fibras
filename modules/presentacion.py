@@ -20,6 +20,7 @@ from .extraccion import (
     ejecutar_con_playwright_sync,
     obtener_cetes_28d,
     obtener_distribuciones,
+    obtener_precio_actual,
     obtener_tabla_fibras_en_notebook,
 )
 from .procesamiento import (
@@ -865,3 +866,225 @@ def seleccionar_ticker_interactivo(emisoras: pd.Series, valor_simulado: Optional
     selector = widgets.Dropdown(options=tickers_disponibles, value=valor_inicial, description="Ticker:")
     display(selector)
     return selector
+
+
+# --- Análisis de múltiples FIBRAs a la vez ---
+
+
+def seleccionar_tickers_interactivo(
+    emisoras: pd.Series, valores_simulados: Optional[list[str]] = None
+) -> widgets.SelectMultiple:
+    """Despliega un widget de selección MÚLTIPLE para elegir entre 1 y N tickers en un solo paso.
+
+    Análogo a `seleccionar_ticker_interactivo`, pero permite analizar varias FIBRAs
+    a la vez (N = total de emisoras listadas). Como el listado de opciones no tiene
+    duplicados, el propio control impide repetir una emisora, así que no hace falta
+    un ciclo de rechazo/reintento. La validación de "al menos 1 ticker" se hace al
+    leer la selección en `armar_tabla_tickers_seleccionados` (una celda después),
+    siguiendo el mismo patrón de los demás selectores del notebook.
+
+    `valores_simulados` fija la selección inicial para pruebas automatizadas (donde
+    no hay un usuario real interactuando con el widget); si incluye algún ticker
+    fuera del listado, se lanza un error claro en vez de continuar con uno inválido.
+    """
+    tickers_disponibles = sorted(pd.Series(emisoras).astype(str).unique().tolist())
+    if not tickers_disponibles:
+        raise ValueError("No hay tickers disponibles para elegir.")
+    valores_simulados = list(valores_simulados) if valores_simulados is not None else []
+    invalidos = [t for t in valores_simulados if t not in tickers_disponibles]
+    if invalidos:
+        raise ValueError(f"Estos tickers no están en el listado: {invalidos}. Tickers válidos: {tickers_disponibles}.")
+    selector = widgets.SelectMultiple(
+        options=tickers_disponibles,
+        value=tuple(valores_simulados),
+        description="Tickers:",
+        rows=min(len(tickers_disponibles), 15),
+    )
+    display(selector)
+    return selector
+
+
+def armar_tabla_tickers_seleccionados(
+    seleccion, emisoras: pd.Series, df_indice: Optional[pd.DataFrame] = None
+) -> pd.DataFrame:
+    """Valida la selección de tickers y arma el DataFrame `tickers_seleccionados`.
+
+    - Exige al menos 1 ticker; quita duplicados conservando el orden de aparición.
+    - Verifica que cada ticker esté en el listado de emisoras (`emisoras`).
+    - Adjunta como metadato la cotización y variación de AMEFIBRA de esta corrida si
+      `df_indice` las trae (columnas `Emisora` / `Cotización` / `Var. %`); si no se
+      ejecutó la extracción en vivo, esas columnas quedan vacías (`<NA>`).
+
+    Las celdas siguientes (precio/periodicidad, años disponibles, fichas de
+    rendimiento anual y de 12 meses) iteran sobre este DataFrame en lugar de sobre
+    un único ticker.
+    """
+    disponibles = set(pd.Series(emisoras).astype(str))
+    tickers: list[str] = []
+    for valor in seleccion:
+        ticker = str(valor).strip().upper()
+        if ticker and ticker not in tickers:
+            tickers.append(ticker)
+    if not tickers:
+        raise ValueError(
+            "Selecciona al menos un ticker en el widget de arriba (clic, o Ctrl/Shift+clic para "
+            "varios) antes de correr esta celda."
+        )
+    no_listados = [t for t in tickers if t not in disponibles]
+    if no_listados:
+        raise ValueError(f"Estos tickers no están en el listado de emisoras: {no_listados}.")
+
+    tabla = pd.DataFrame({"ticker": tickers})
+    columnas_metadato = {"cotizacion_amefibra": "Cotización", "var_pct_amefibra": "Var. %"}
+    for columna_destino, columna_origen in columnas_metadato.items():
+        if df_indice is not None and not df_indice.empty and {"Emisora", columna_origen}.issubset(df_indice.columns):
+            tabla[columna_destino] = tabla["ticker"].map(df_indice.set_index("Emisora")[columna_origen])
+        else:
+            tabla[columna_destino] = pd.NA
+
+    print(f"Tickers seleccionados ({len(tabla)}): {', '.join(tabla['ticker'])}.")
+    return tabla
+
+
+def descargar_historiales_dividendos(
+    tickers, emisoras: pd.Series, carpeta_salida: Path
+) -> dict:
+    """Descarga el historial de distribuciones de cada ticker, tolerando fallos individuales.
+
+    Devuelve un dict `{ticker: DataFrame}` (o `{ticker: None}` si la descarga de ese
+    ticker falló: se muestra una advertencia visible y se continúa con los demás).
+    Reutiliza `obtener_distribuciones` (misma validación de forma y export a CSV que
+    el flujo de un solo ticker).
+    """
+    disponibles = set(pd.Series(emisoras).astype(str))
+    historiales: dict = {}
+    for ticker in tickers:
+        if ticker not in disponibles:
+            print(f"  Aviso: {ticker} no está en el listado de emisoras; se omite.")
+            historiales[ticker] = None
+            continue
+        try:
+            historial = obtener_distribuciones(ticker, carpeta_salida)
+            historiales[ticker] = historial
+            print(
+                f"  {ticker}: {len(historial)} distribuciones · periodicidad "
+                f"{historial['periodicity'].iloc[0]} · CSV: {historial.attrs['ruta_csv'].name}"
+            )
+        except Exception as error:  # noqa: BLE001 - tolerancia a fallos por ticker, a propósito
+            print(f"  Aviso: no se pudo obtener el historial de dividendos de {ticker}: {error}")
+            historiales[ticker] = None
+    return historiales
+
+
+def resumen_precio_periodicidad(
+    tickers_seleccionados: pd.DataFrame, historiales: dict
+) -> pd.DataFrame:
+    """Tabla única con el precio actual y la periodicidad de dividendos de cada ticker seleccionado.
+
+    `precio_actual` es el último cierre diario disponible en Yahoo Finance
+    (`obtener_precio_actual`); `periodicidad` sale del historial ya descargado en
+    `historiales`. Si falla la obtención de alguno para un ticker, esa celda queda
+    como `N/A` y el resto de la tabla se arma igual (misma tolerancia a fallos
+    individuales que el resto del notebook).
+    """
+    filas = []
+    for ticker in tickers_seleccionados["ticker"]:
+        try:
+            precio_actual = f"${obtener_precio_actual(ticker):,.2f}"
+        except Exception:  # noqa: BLE001 - degradación a "N/A" a propósito
+            precio_actual = "N/A"
+        historial = historiales.get(ticker)
+        periodicidad = (
+            historial["periodicity"].iloc[0] if historial is not None and not historial.empty else "N/A"
+        )
+        filas.append({"ticker": ticker, "precio_actual": precio_actual, "periodicidad": periodicidad})
+    tabla = pd.DataFrame(filas)
+    display(tabla)
+    return tabla
+
+
+def _iterar_fichas_tickers(
+    tickers_seleccionados: pd.DataFrame,
+    historiales: dict,
+    generar_ficha,
+    etiqueta_ficha: str,
+) -> dict:
+    """Recorre los tickers seleccionados aplicando `generar_ficha(ticker, historial)` a cada uno.
+
+    Omite (con advertencia visible) los tickers sin historial de dividendos
+    disponible o cuya ficha falle, sin detener la generación para el resto.
+    Devuelve `{ticker: ruta_html}` de las fichas efectivamente generadas, en el
+    orden de `tickers_seleccionados`.
+    """
+    rutas: dict = {}
+    for ticker in tickers_seleccionados["ticker"]:
+        historial = historiales.get(ticker)
+        if historial is None or historial.empty:
+            print(f"Aviso: se omite la {etiqueta_ficha} de {ticker}: sin historial de dividendos disponible.")
+            continue
+        try:
+            rutas[ticker] = generar_ficha(ticker, historial)
+        except Exception as error:  # noqa: BLE001 - tolerancia a fallos por ticker, a propósito
+            print(f"Aviso: no se pudo generar la {etiqueta_ficha} de {ticker}: {error}")
+    return rutas
+
+
+def mostrar_fichas_rendimiento_multi(
+    tickers_seleccionados: pd.DataFrame,
+    historiales: dict,
+    carpeta_salida: Path,
+    carpeta_fichas_pdf: Path,
+    año: Optional[int] = None,
+    fecha_referencia: Optional[datetime] = None,
+) -> dict:
+    """Genera, muestra y exporta a PDF la ficha de rendimiento de cada ticker seleccionado.
+
+    Modo año calendario (`año` dado) o ventana móvil de los últimos 12 meses
+    (`año=None`), igual que `mostrar_ficha_rendimiento`; el mismo año / la misma
+    ventana se aplican a todos los tickers. Cada ficha se exporta a un archivo HTML
+    y un PDF independientes por ticker, con la convención de nombre ya definida.
+    """
+    if año is not None:
+        descripcion_pdf, periodo_pdf = "rendimiento anual", str(año)
+    else:
+        _, fecha_fin = calcular_ventana_movil_12_meses(fecha_referencia)
+        descripcion_pdf, periodo_pdf = "rendimiento 12 meses", f"{fecha_fin:%Y%m%d}"
+
+    def _generar(ticker: str, historial: pd.DataFrame) -> Path:
+        ruta = mostrar_ficha_rendimiento(ticker, año, carpeta_salida, historial, fecha_referencia=fecha_referencia)
+        ruta_pdf = exportar_ficha_a_pdf(ruta, ticker, descripcion_pdf, periodo_pdf, carpeta_fichas_pdf)
+        print(f"PDF generado: {ruta_pdf}")
+        return ruta
+
+    return _iterar_fichas_tickers(tickers_seleccionados, historiales, _generar, "ficha de rendimiento")
+
+
+def mostrar_fichas_completas_cliente_multi(
+    tickers_seleccionados: pd.DataFrame,
+    historiales: dict,
+    carpeta_salida: Path,
+    carpeta_fichas_pdf: Path,
+    año: Optional[int] = None,
+    fecha_referencia: Optional[datetime] = None,
+) -> dict:
+    """Genera, muestra y exporta a PDF la ficha completa para el cliente de cada ticker seleccionado.
+
+    Igual criterio que `mostrar_fichas_rendimiento_multi` (año calendario o ventana
+    móvil de 12 meses, un archivo HTML y un PDF por ticker), aplicado a la ficha
+    completa (`mostrar_ficha_completa_cliente`).
+    """
+    if año is not None:
+        descripcion_pdf, periodo_pdf = "ficha completa cliente", str(año)
+    else:
+        _, fecha_fin = calcular_ventana_movil_12_meses(fecha_referencia)
+        descripcion_pdf, periodo_pdf = "ficha completa 12 meses", f"{fecha_fin:%Y%m%d}"
+
+    def _generar(ticker: str, historial: pd.DataFrame) -> Path:
+        ruta = mostrar_ficha_completa_cliente(
+            ticker, año, carpeta_salida, historial, fecha_referencia=fecha_referencia
+        )
+        ruta_pdf = exportar_ficha_a_pdf(ruta, ticker, descripcion_pdf, periodo_pdf, carpeta_fichas_pdf)
+        print(f"PDF generado: {ruta_pdf}")
+        return ruta
+
+    return _iterar_fichas_tickers(tickers_seleccionados, historiales, _generar, "ficha completa")

@@ -238,6 +238,22 @@ def _descargar_cierres_rango_sin_cachear(ticker_yahoo: str, inicio: pd.Timestamp
     return cierres
 
 
+def obtener_precio_actual(ticker: str) -> float:
+    """Último cierre diario disponible de `ticker` en Yahoo Finance (proxy de "precio actual").
+
+    Descarga los cierres de los últimos ~15 días naturales y devuelve el más
+    reciente. Lanza `ValueError` si Yahoo Finance no devuelve precios (ticker sin
+    cobertura, corte de red): quien llame decide cómo degradar (p. ej. mostrar
+    "N/A" en la tabla de resumen sin detener el resto de los tickers).
+    """
+    ticker_base = _normalizar_ticker(ticker)
+    hoy = pd.Timestamp(datetime.now().date())
+    cierres = _descargar_cierres_rango_sin_cachear(f"{ticker_base}.MX", hoy - pd.Timedelta(days=15), hoy)
+    if cierres.empty:
+        raise ValueError(f"Yahoo Finance no devolvió precios recientes para {ticker_base}.")
+    return float(cierres.iloc[-1])
+
+
 def _descargar_historico_completo(ticker_yahoo: str) -> pd.Series:
     """Cierres diarios de `ticker_yahoo` desde el primer dato disponible en Yahoo Finance hasta hoy.
 

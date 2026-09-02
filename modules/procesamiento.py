@@ -67,6 +67,26 @@ def obtener_anios_disponibles(historial: pd.DataFrame) -> list[int]:
     return sorted(años.unique().tolist(), reverse=True)
 
 
+def obtener_anios_disponibles_comunes(historiales: dict) -> list[int]:
+    """Años calendario con al menos una distribución en TODOS los historiales dados.
+
+    `historiales` es un dict `{ticker: DataFrame de distribuciones}` (el que arma
+    `presentacion.descargar_historiales_dividendos`). Es la **intersección** de
+    `obtener_anios_disponibles` de cada ticker: solo los años en que *todos* tienen
+    datos, del más reciente al más antiguo. Las entradas con valor `None` (ticker
+    cuyo historial no se pudo descargar) se ignoran: la intersección se calcula solo
+    sobre los tickers con datos, para no dejarla vacía por un fallo individual.
+    """
+    conjuntos = [
+        set(obtener_anios_disponibles(historial))
+        for historial in historiales.values()
+        if historial is not None and not historial.empty
+    ]
+    if not conjuntos:
+        return []
+    return sorted(set.intersection(*conjuntos), reverse=True)
+
+
 def calcular_ventana_movil_12_meses(fecha_referencia: Optional[datetime] = None) -> tuple[pd.Timestamp, pd.Timestamp]:
     """Rango de los últimos 12 meses completos terminando en `fecha_referencia`.
 
