@@ -186,22 +186,19 @@ def exportar_xlsx(df: pd.DataFrame, ruta: Path) -> Path:
     return ruta
 
 
-def crear_ficha_rendimiento(
+def _calcular_rendimiento(
     ticker: str,
     año: Optional[int],
     carpeta_salida: Path,
     historial: Optional[pd.DataFrame] = None,
     fecha_referencia: Optional[datetime] = None,
-) -> Path:
-    """Calcula y exporta una ficha HTML de rendimiento total para un año calendario.
+) -> dict:
+    """Calcula los indicadores de rendimiento total de un ticker en un año calendario
+    o en la ventana móvil de últimos 12 meses (ver `crear_ficha_rendimiento`).
 
-    Si `fecha_referencia` se especifica, `año` se ignora y el periodo analizado es,
-    en cambio, la ventana móvil de los últimos 12 meses completos terminando en esa
-    fecha (`calcular_ventana_movil_12_meses`; por defecto, si se pasa una fecha
-    "vacía"/None con este modo activo, la fecha de referencia es hoy). Este modo
-    agrega además el riesgo mensual promedio del periodo (volatilidad del retorno
-    total mensual) como cifra destacada junto al rendimiento total; el modo de año
-    calendario (`fecha_referencia=None`, el de siempre) no se modifica.
+    Es el cálculo compartido por `crear_ficha_rendimiento` (una ficha por ticker) y
+    `crear_comparativo_rendimiento` (una tabla con todos los tickers seleccionados),
+    para no duplicar la lógica ni arriesgar que ambas versiones diverjan.
     """
     usar_ventana_movil = fecha_referencia is not None or año is None
     if not usar_ventana_movil and (not isinstance(año, int) or año < 1900 or año > 2100):
@@ -218,7 +215,7 @@ def crear_ficha_rendimiento(
     pagos_ticker["amount_mxn"] = pd.to_numeric(pagos_ticker["amount_mxn"], errors="coerce")
     pagos_ticker = pagos_ticker[pagos_ticker["ticker"].astype(str).str.upper() == ticker_base]
 
-    riesgo_html = ""
+    riesgo = None
     if usar_ventana_movil:
         fecha_inicio, fecha_fin = calcular_ventana_movil_12_meses(fecha_referencia)
         pagos = pagos_ticker[
@@ -237,10 +234,6 @@ def crear_ficha_rendimiento(
         etiqueta_pagos = "Distribuciones del periodo"
         sufijo_archivo = f"{fecha_fin:%Y%m%d}_ult12m"
         riesgo = calcular_riesgo_mensual(cierres_historicos, pagos, fecha_inicio, fecha_fin)
-        riesgo_html = (
-            '<div class="legend">Riesgo mensual promedio (volatilidad del retorno total mensual): '
-            f'{riesgo["volatilidad_mensual_pct"]:,.2f}%</div>'
-        )
         aviso_riesgo = " El riesgo mostrado es histórico y tampoco debe interpretarse como predictor de riesgo futuro."
     else:
         pagos = pagos_ticker[(pagos_ticker["ex_date"].dt.year == año) & pagos_ticker["amount_mxn"].notna()]
@@ -261,6 +254,73 @@ def crear_ficha_rendimiento(
     rendimiento_total = ganancia_total / precio_inicial * 100
     fecha_inicial = cierres.index[0].strftime("%Y-%m-%d")
     fecha_final = cierres.index[-1].strftime("%Y-%m-%d")
+
+    return {
+        "ticker_base": ticker_base,
+        "usar_ventana_movil": usar_ventana_movil,
+        "etiqueta_periodo": etiqueta_periodo,
+        "etiqueta_total": etiqueta_total,
+        "etiqueta_pagos": etiqueta_pagos,
+        "sufijo_archivo": sufijo_archivo,
+        "aviso_riesgo": aviso_riesgo,
+        "precio_inicial": precio_inicial,
+        "precio_final": precio_final,
+        "fecha_inicial": fecha_inicial,
+        "fecha_final": fecha_final,
+        "total_dividendos": total_dividendos,
+        "variacion_capital": variacion_capital,
+        "ganancia_total": ganancia_total,
+        "rendimiento_dividendos": rendimiento_dividendos,
+        "rendimiento_capital": rendimiento_capital,
+        "rendimiento_total": rendimiento_total,
+        "pagos": pagos,
+        "riesgo": riesgo,
+    }
+
+
+def crear_ficha_rendimiento(
+    ticker: str,
+    año: Optional[int],
+    carpeta_salida: Path,
+    historial: Optional[pd.DataFrame] = None,
+    fecha_referencia: Optional[datetime] = None,
+) -> Path:
+    """Calcula y exporta una ficha HTML de rendimiento total para un año calendario.
+
+    Si `fecha_referencia` se especifica, `año` se ignora y el periodo analizado es,
+    en cambio, la ventana móvil de los últimos 12 meses completos terminando en esa
+    fecha (`calcular_ventana_movil_12_meses`; por defecto, si se pasa una fecha
+    "vacía"/None con este modo activo, la fecha de referencia es hoy). Este modo
+    agrega además el riesgo mensual promedio del periodo (volatilidad del retorno
+    total mensual) como cifra destacada junto al rendimiento total; el modo de año
+    calendario (`fecha_referencia=None`, el de siempre) no se modifica.
+    """
+    datos = _calcular_rendimiento(ticker, año, carpeta_salida, historial, fecha_referencia)
+    ticker_base = datos["ticker_base"]
+    etiqueta_periodo = datos["etiqueta_periodo"]
+    etiqueta_total = datos["etiqueta_total"]
+    etiqueta_pagos = datos["etiqueta_pagos"]
+    sufijo_archivo = datos["sufijo_archivo"]
+    aviso_riesgo = datos["aviso_riesgo"]
+    precio_inicial = datos["precio_inicial"]
+    precio_final = datos["precio_final"]
+    fecha_inicial = datos["fecha_inicial"]
+    fecha_final = datos["fecha_final"]
+    total_dividendos = datos["total_dividendos"]
+    variacion_capital = datos["variacion_capital"]
+    ganancia_total = datos["ganancia_total"]
+    rendimiento_dividendos = datos["rendimiento_dividendos"]
+    rendimiento_capital = datos["rendimiento_capital"]
+    rendimiento_total = datos["rendimiento_total"]
+    pagos = datos["pagos"]
+
+    riesgo_html = ""
+    if datos["usar_ventana_movil"]:
+        riesgo_html = (
+            '<div class="legend">Riesgo mensual promedio (volatilidad del retorno total mensual): '
+            f'{datos["riesgo"]["volatilidad_mensual_pct"]:,.2f}%</div>'
+        )
+
     max_componente = max(abs(total_dividendos), abs(variacion_capital), 0.000001)
     ancho_dividendos = abs(total_dividendos) / max_componente * 100
     ancho_capital = abs(variacion_capital) / max_componente * 100
@@ -307,31 +367,21 @@ def _fecha_corta_es(fecha: pd.Timestamp) -> str:
     return f"{fecha.day:02d} {_MESES_ABREV_ES[fecha.month - 1].capitalize()} {fecha.year}"
 
 
-def crear_ficha_completa_cliente(
+def _calcular_ficha_completa(
     ticker: str,
     año: Optional[int],
     carpeta_salida: Path,
     historial: Optional[pd.DataFrame] = None,
     capital_invertido: float = 10000.0,
-    marca: str = "ZAMUDIO INVESTORS",
     fecha_referencia: Optional[datetime] = None,
-) -> Path:
-    """Calcula y exporta la ficha HTML completa anual para el cliente, con datos reales de un ticker/año.
+) -> dict:
+    """Calcula los indicadores de la ficha completa para cliente de un ticker en un
+    año calendario o en la ventana móvil de últimos 12 meses (ver `crear_ficha_completa_cliente`).
 
-    A diferencia de `crear_ficha_rendimiento` (que ya no se modifica), esta ficha usa
-    un diseño distinto pensado como entregable final para el cliente: escenario de
-    inversión con un capital de referencia, distribuciones mensuales, el historial
-    detallado de pagos (fecha, monto y rendimiento) y el rendimiento total en el
-    año. Reutiliza las mismas fuentes de datos (`obtener_distribuciones`,
-    `_descargar_cierres_anuales`) que la ficha de rendimiento, en vez de duplicar
-    la lógica de extracción.
-
-    Si `fecha_referencia` se especifica (o `año` se omite), `año` se ignora y el
-    periodo analizado es la ventana móvil de los últimos 12 meses completos
-    terminando en esa fecha, igual que en `crear_ficha_rendimiento`. Este modo
-    agrega, además, una sección de riesgo del periodo (volatilidad anualizada del
-    retorno total mensual, con la serie de los 12 retornos mensuales en barras);
-    el modo de año calendario (por defecto) no se modifica.
+    Es el cálculo compartido por `crear_ficha_completa_cliente` (una ficha por
+    ticker) y `crear_comparativo_completo_cliente` (una tabla con todos los tickers
+    seleccionados), para no duplicar la lógica ni arriesgar que ambas versiones
+    diverjan.
     """
     usar_ventana_movil = fecha_referencia is not None or año is None
     if not usar_ventana_movil and (not isinstance(año, int) or año < 1900 or año > 2100):
@@ -350,7 +400,7 @@ def crear_ficha_completa_cliente(
     pagos_ticker["amount_mxn"] = pd.to_numeric(pagos_ticker["amount_mxn"], errors="coerce")
     pagos_ticker = pagos_ticker[pagos_ticker["ticker"].astype(str).str.upper() == ticker_base]
 
-    riesgo_seccion_html = ""
+    riesgo = None
     aviso_riesgo = ""
     if usar_ventana_movil:
         fecha_inicio, fecha_fin = calcular_ventana_movil_12_meses(fecha_referencia)
@@ -396,7 +446,87 @@ def crear_ficha_completa_cliente(
     else:
         pagos_por_mes = pagos.groupby(pagos["ex_date"].dt.month)["amount_mxn"].sum().reindex(range(1, 13), fill_value=0.0)
         etiquetas_meses = _MESES_ABREV_ES
-    valores_mensuales = pagos_por_mes.tolist()
+
+    if usar_ventana_movil:
+        riesgo = calcular_riesgo_mensual(cierres_historicos, pagos, fecha_inicio, fecha_fin)
+        aviso_riesgo = " El riesgo mostrado es histórico y tampoco debe interpretarse como predictor de riesgo futuro."
+
+    detalle_pagos = pagos.sort_values("ex_date").copy()
+    if "yield_pct" in detalle_pagos.columns:
+        detalle_pagos["yield_pct"] = pd.to_numeric(detalle_pagos["yield_pct"], errors="coerce")
+    else:
+        detalle_pagos["yield_pct"] = detalle_pagos["amount_mxn"] / precio_compra * 100
+
+    return {
+        "ticker_base": ticker_base,
+        "usar_ventana_movil": usar_ventana_movil,
+        "etiqueta_periodo": etiqueta_periodo,
+        "etiqueta_dist": etiqueta_dist,
+        "sufijo_archivo": sufijo_archivo,
+        "aviso_riesgo": aviso_riesgo,
+        "precio_compra": precio_compra,
+        "precio_actual": precio_actual,
+        "fecha_inicial": fecha_inicial,
+        "fecha_final": fecha_final,
+        "titulos": titulos,
+        "plusvalia": plusvalia,
+        "dividendo_por_titulo": dividendo_por_titulo,
+        "distribuciones_totales": distribuciones_totales,
+        "retorno_total": retorno_total,
+        "rendimiento_total_pct": rendimiento_total_pct,
+        "pagos_por_mes": pagos_por_mes,
+        "etiquetas_meses": etiquetas_meses,
+        "detalle_pagos": detalle_pagos,
+        "riesgo": riesgo,
+    }
+
+
+def crear_ficha_completa_cliente(
+    ticker: str,
+    año: Optional[int],
+    carpeta_salida: Path,
+    historial: Optional[pd.DataFrame] = None,
+    capital_invertido: float = 10000.0,
+    marca: str = "ZAMUDIO INVESTORS",
+    fecha_referencia: Optional[datetime] = None,
+) -> Path:
+    """Calcula y exporta la ficha HTML completa anual para el cliente, con datos reales de un ticker/año.
+
+    A diferencia de `crear_ficha_rendimiento` (que ya no se modifica), esta ficha usa
+    un diseño distinto pensado como entregable final para el cliente: escenario de
+    inversión con un capital de referencia, distribuciones mensuales, el historial
+    detallado de pagos (fecha, monto y rendimiento) y el rendimiento total en el
+    año. Reutiliza las mismas fuentes de datos (`obtener_distribuciones`,
+    `_descargar_cierres_anuales`) que la ficha de rendimiento, en vez de duplicar
+    la lógica de extracción.
+
+    Si `fecha_referencia` se especifica (o `año` se omite), `año` se ignora y el
+    periodo analizado es la ventana móvil de los últimos 12 meses completos
+    terminando en esa fecha, igual que en `crear_ficha_rendimiento`. Este modo
+    agrega, además, una sección de riesgo del periodo (volatilidad anualizada del
+    retorno total mensual, con la serie de los 12 retornos mensuales en barras);
+    el modo de año calendario (por defecto) no se modifica.
+    """
+    datos = _calcular_ficha_completa(ticker, año, carpeta_salida, historial, capital_invertido, fecha_referencia)
+    ticker_base = datos["ticker_base"]
+    etiqueta_periodo = datos["etiqueta_periodo"]
+    etiqueta_dist = datos["etiqueta_dist"]
+    sufijo_archivo = datos["sufijo_archivo"]
+    aviso_riesgo = datos["aviso_riesgo"]
+    precio_compra = datos["precio_compra"]
+    precio_actual = datos["precio_actual"]
+    fecha_inicial = datos["fecha_inicial"]
+    fecha_final = datos["fecha_final"]
+    titulos = datos["titulos"]
+    plusvalia = datos["plusvalia"]
+    dividendo_por_titulo = datos["dividendo_por_titulo"]
+    distribuciones_totales = datos["distribuciones_totales"]
+    retorno_total = datos["retorno_total"]
+    rendimiento_total_pct = datos["rendimiento_total_pct"]
+    etiquetas_meses = datos["etiquetas_meses"]
+    valores_mensuales = datos["pagos_por_mes"].tolist()
+    detalle_pagos = datos["detalle_pagos"]
+
     max_mensual = max(max(valores_mensuales), 0.000001)
     barras_html = "".join(
         f'<div class="bar-col"><div class="bar-fill" style="height:{valor / max_mensual * 100:.1f}%"></div>'
@@ -404,8 +534,9 @@ def crear_ficha_completa_cliente(
         for etiqueta, valor in zip(etiquetas_meses, valores_mensuales)
     )
 
-    if usar_ventana_movil:
-        riesgo = calcular_riesgo_mensual(cierres_historicos, pagos, fecha_inicio, fecha_fin)
+    riesgo_seccion_html = ""
+    if datos["usar_ventana_movil"]:
+        riesgo = datos["riesgo"]
         retornos_mensuales = riesgo["retornos_mensuales_pct"]
         max_retorno_abs = max(retornos_mensuales.abs().max(), 0.000001)
         barras_riesgo_html = "".join(
@@ -425,13 +556,7 @@ def crear_ficha_completa_cliente(
 </div>
 <div class="period-note">Retorno total mensual (variación de precio + dividendos del mes) de cada uno de los últimos 12 meses; verde = mes positivo, rojo = mes negativo.</div>
 </div>"""
-        aviso_riesgo = " El riesgo mostrado es histórico y tampoco debe interpretarse como predictor de riesgo futuro."
 
-    detalle_pagos = pagos.sort_values("ex_date").copy()
-    if "yield_pct" in detalle_pagos.columns:
-        detalle_pagos["yield_pct"] = pd.to_numeric(detalle_pagos["yield_pct"], errors="coerce")
-    else:
-        detalle_pagos["yield_pct"] = detalle_pagos["amount_mxn"] / precio_compra * 100
     filas_detalle = "".join(
         f"<tr><td>{_fecha_corta_es(fila.ex_date)}</td>"
         f'<td class="num">${fila.amount_mxn:,.4f}</td>'
@@ -828,6 +953,44 @@ def exportar_ficha_a_pdf(
     return ruta_pdf
 
 
+def exportar_comparativo_a_html(
+    ruta_html: Path,
+    descripcion: str,
+    periodo: str,
+    carpeta_salida: Path,
+) -> Path:
+    """Copia un comparativo de FIBRAs ya generado (por `crear_comparativo_rendimiento`
+    o `crear_comparativo_completo_cliente`) a la carpeta de entregables, con un
+    nombre de archivo estandarizado: `AAAA-MM-DD_HHMM_comparativo_descripcion-breve_periodo.html`.
+
+    Análogo a `exportar_ficha_a_pdf`, pero el entregable se queda en HTML
+    responsivo en vez de convertirse a PDF: al juntar a todas las FIBRAs
+    seleccionadas en un solo archivo, el nombre ya no lleva un ticker específico.
+    La fecha/hora del nombre se toma del propio nombre de `ruta_html` (prefijo
+    `YYYYMMDD_HHMMSS_` que ya generan ambas funciones de comparativo), es decir, el
+    momento en que se consultaron los datos. `descripcion` debe tener como máximo
+    cuatro palabras. Si ya existe un archivo con el mismo nombre, se sobrescribe.
+    """
+    coincidencia = _PATRON_TIMESTAMP_FICHA.match(ruta_html.name)
+    if not coincidencia:
+        raise ValueError(
+            f"'{ruta_html.name}' no tiene el prefijo de fecha/hora esperado (YYYYMMDD_HHMMSS_)."
+        )
+    momento = datetime.strptime(coincidencia.group(1) + coincidencia.group(2), "%Y%m%d%H%M%S")
+
+    palabras = str(descripcion).strip().lower().split()
+    if not palabras:
+        raise ValueError("La descripción breve no puede estar vacía.")
+    if len(palabras) > 4:
+        raise ValueError("La descripción breve debe tener máximo cuatro palabras.")
+    descripcion_normalizada = "-".join(palabras)
+
+    carpeta_salida.mkdir(parents=True, exist_ok=True)
+    ruta_destino = carpeta_salida / f"{momento:%Y-%m-%d_%H%M}_comparativo_{descripcion_normalizada}_{periodo}.html"
+    ruta_destino.write_text(ruta_html.read_text(encoding="utf-8"), encoding="utf-8")
+    return ruta_destino
+
+
 def seleccionar_anio_interactivo(años_disponibles: list[int], valor_simulado: Optional[int] = None) -> widgets.Dropdown:
     """Despliega un dropdown para elegir, de los años con datos disponibles, cuál consultar.
 
@@ -1023,88 +1186,321 @@ def resumen_precio_periodicidad(
     return tabla
 
 
-def _iterar_fichas_tickers(
+_COLOR_POSITIVO_OSCURO = "#5fd9b0"
+_COLOR_NEGATIVO_OSCURO = "#f2836a"
+_COLOR_POSITIVO_CLARO = "#2f8f6f"
+_COLOR_NEGATIVO_CLARO = "#c0503c"
+
+
+def _fila_comparativo(tickers_ok: list[str], datos_por_ticker: dict, etiqueta: str, formato, campo_color: Optional[str] = None, color_pos: str = _COLOR_POSITIVO_OSCURO, color_neg: str = _COLOR_NEGATIVO_OSCURO) -> str:
+    """Arma una fila `<tr>` de una tabla comparativa: una etiqueta y una celda por FIBRA.
+
+    Si `campo_color` se indica, el texto de cada celda se resalta en `color_pos` o
+    `color_neg` según el signo del valor numérico en `datos_por_ticker[ticker][campo_color]`.
+    Compartida por `crear_comparativo_rendimiento` y `crear_comparativo_completo_cliente`
+    para que ambas tablas comparativas se vean y se comporten igual.
+    """
+    celdas = []
+    for ticker in tickers_ok:
+        datos = datos_por_ticker[ticker]
+        texto = escape(formato(datos))
+        if campo_color is not None:
+            color = color_neg if datos[campo_color] < 0 else color_pos
+            texto = f'<span style="color:{color};font-weight:600">{texto}</span>'
+        celdas.append(f"<td>{texto}</td>")
+    return f"<tr><th>{escape(etiqueta)}</th>{''.join(celdas)}</tr>"
+
+
+def crear_comparativo_rendimiento(
     tickers_seleccionados: pd.DataFrame,
     historiales: dict,
-    generar_ficha,
-    etiqueta_ficha: str,
-) -> dict:
-    """Recorre los tickers seleccionados aplicando `generar_ficha(ticker, historial)` a cada uno.
+    carpeta_salida: Path,
+    año: Optional[int] = None,
+    fecha_referencia: Optional[datetime] = None,
+) -> Path:
+    """Calcula y exporta el comparativo de rendimiento de todas las FIBRAs seleccionadas en una sola tabla.
 
-    Omite (con advertencia visible) los tickers sin historial de dividendos
-    disponible o cuya ficha falle, sin detener la generación para el resto.
-    Devuelve `{ticker: ruta_html}` de las fichas efectivamente generadas, en el
-    orden de `tickers_seleccionados`.
+    Reutiliza el mismo cálculo que `crear_ficha_rendimiento` (`_calcular_rendimiento`)
+    para cada ticker, con el mismo año calendario o la misma ventana móvil de
+    últimos 12 meses aplicados por igual a todos ellos (`mostrar_ficha_rendimiento`
+    sigue disponible sin cambios para el análisis de un solo ticker). No omite
+    ningún indicador de los que ya muestra la ficha individual: además de la tabla
+    resumen (indicadores en filas, FIBRAs en columnas), incluye el detalle completo
+    de distribuciones de todas las FIBRAs. El diseño es de tablas anchas con scroll
+    horizontal controlado y la primera columna fija, para que se lea igual de bien
+    en escritorio y en celular.
     """
-    rutas: dict = {}
+    datos_por_ticker: dict[str, dict] = {}
     for ticker in tickers_seleccionados["ticker"]:
         historial = historiales.get(ticker)
         if historial is None or historial.empty:
-            print(f"Aviso: se omite la {etiqueta_ficha} de {ticker}: sin historial de dividendos disponible.")
+            print(f"Aviso: se omite {ticker} del comparativo de rendimiento: sin historial de dividendos disponible.")
             continue
         try:
-            rutas[ticker] = generar_ficha(ticker, historial)
+            datos_por_ticker[ticker] = _calcular_rendimiento(ticker, año, carpeta_salida, historial, fecha_referencia)
         except Exception as error:  # noqa: BLE001 - tolerancia a fallos por ticker, a propósito
-            print(f"Aviso: no se pudo generar la {etiqueta_ficha} de {ticker}: {error}")
-    return rutas
+            print(f"Aviso: no se pudo calcular el rendimiento de {ticker} para el comparativo: {error}")
+    if not datos_por_ticker:
+        raise ValueError("No hay tickers con datos suficientes para armar el comparativo de rendimiento.")
 
+    tickers_ok = list(datos_por_ticker)
+    referencia = datos_por_ticker[tickers_ok[0]]
+    encabezados_html = "".join(f"<th>{escape(t)}</th>" for t in tickers_ok)
 
-def mostrar_fichas_rendimiento_multi(
-    tickers_seleccionados: pd.DataFrame,
-    historiales: dict,
-    carpeta_salida: Path,
-    carpeta_fichas_pdf: Path,
-    año: Optional[int] = None,
-    fecha_referencia: Optional[datetime] = None,
-) -> dict:
-    """Genera, muestra y exporta a PDF la ficha de rendimiento de cada ticker seleccionado.
-
-    Modo año calendario (`año` dado) o ventana móvil de los últimos 12 meses
-    (`año=None`), igual que `mostrar_ficha_rendimiento`; el mismo año / la misma
-    ventana se aplican a todos los tickers. Cada ficha se exporta a un archivo HTML
-    y un PDF independientes por ticker, con la convención de nombre ya definida.
-    """
-    if año is not None:
-        descripcion_pdf, periodo_pdf = "rendimiento anual", str(año)
-    else:
-        _, fecha_fin = calcular_ventana_movil_12_meses(fecha_referencia)
-        descripcion_pdf, periodo_pdf = "rendimiento 12 meses", f"{fecha_fin:%Y%m%d}"
-
-    def _generar(ticker: str, historial: pd.DataFrame) -> Path:
-        ruta = mostrar_ficha_rendimiento(ticker, año, carpeta_salida, historial, fecha_referencia=fecha_referencia)
-        ruta_pdf = exportar_ficha_a_pdf(ruta, ticker, descripcion_pdf, periodo_pdf, carpeta_fichas_pdf)
-        print(f"PDF generado: {ruta_pdf}")
-        return ruta
-
-    return _iterar_fichas_tickers(tickers_seleccionados, historiales, _generar, "ficha de rendimiento")
-
-
-def mostrar_fichas_completas_cliente_multi(
-    tickers_seleccionados: pd.DataFrame,
-    historiales: dict,
-    carpeta_salida: Path,
-    carpeta_fichas_pdf: Path,
-    año: Optional[int] = None,
-    fecha_referencia: Optional[datetime] = None,
-) -> dict:
-    """Genera, muestra y exporta a PDF la ficha completa para el cliente de cada ticker seleccionado.
-
-    Igual criterio que `mostrar_fichas_rendimiento_multi` (año calendario o ventana
-    móvil de 12 meses, un archivo HTML y un PDF por ticker), aplicado a la ficha
-    completa (`mostrar_ficha_completa_cliente`).
-    """
-    if año is not None:
-        descripcion_pdf, periodo_pdf = "ficha completa cliente", str(año)
-    else:
-        _, fecha_fin = calcular_ventana_movil_12_meses(fecha_referencia)
-        descripcion_pdf, periodo_pdf = "ficha completa 12 meses", f"{fecha_fin:%Y%m%d}"
-
-    def _generar(ticker: str, historial: pd.DataFrame) -> Path:
-        ruta = mostrar_ficha_completa_cliente(
-            ticker, año, carpeta_salida, historial, fecha_referencia=fecha_referencia
+    filas_resumen_html = "".join([
+        _fila_comparativo(tickers_ok, datos_por_ticker, "Periodo (cierres)", lambda d: f"{d['fecha_inicial']} a {d['fecha_final']}"),
+        _fila_comparativo(tickers_ok, datos_por_ticker, "Precio inicial", lambda d: f"${d['precio_inicial']:,.2f} MXN"),
+        _fila_comparativo(tickers_ok, datos_por_ticker, "Precio final", lambda d: f"${d['precio_final']:,.2f} MXN"),
+        _fila_comparativo(tickers_ok, datos_por_ticker, "Variación de precio", lambda d: f"{d['rendimiento_capital']:,.2f}%", "rendimiento_capital"),
+        _fila_comparativo(tickers_ok, datos_por_ticker, "Rendimiento por dividendos", lambda d: f"{d['rendimiento_dividendos']:,.2f}%"),
+        _fila_comparativo(tickers_ok, datos_por_ticker, "Rendimiento total", lambda d: f"{d['rendimiento_total']:,.2f}%", "rendimiento_total"),
+        _fila_comparativo(tickers_ok, datos_por_ticker, "Ganancia total", lambda d: f"${d['ganancia_total']:,.2f} MXN", "ganancia_total"),
+        _fila_comparativo(tickers_ok, datos_por_ticker, "Dividendos recibidos", lambda d: f"${d['total_dividendos']:,.4f} MXN"),
+        _fila_comparativo(tickers_ok, datos_por_ticker, "Variación de capital", lambda d: f"${d['variacion_capital']:,.2f} MXN", "variacion_capital"),
+    ])
+    if referencia["usar_ventana_movil"]:
+        filas_resumen_html += _fila_comparativo(
+            tickers_ok, datos_por_ticker, "Riesgo mensual promedio", lambda d: f'{d["riesgo"]["volatilidad_mensual_pct"]:,.2f}%'
         )
-        ruta_pdf = exportar_ficha_a_pdf(ruta, ticker, descripcion_pdf, periodo_pdf, carpeta_fichas_pdf)
-        print(f"PDF generado: {ruta_pdf}")
-        return ruta
 
-    return _iterar_fichas_tickers(tickers_seleccionados, historiales, _generar, "ficha completa")
+    filas_pagos = []
+    for ticker in tickers_ok:
+        pagos = datos_por_ticker[ticker]["pagos"].sort_values("ex_date")
+        for fila in pagos.itertuples():
+            filas_pagos.append(
+                f"<tr><td>{escape(ticker)}</td><td>{fila.ex_date:%Y-%m-%d}</td>"
+                f'<td class="num">${fila.amount_mxn:,.4f}</td><td class="num">{fila.yield_pct:,.2f}%</td></tr>'
+            )
+    filas_pagos_html = "".join(filas_pagos) if filas_pagos else '<tr><td colspan="4">Sin distribuciones en el periodo.</td></tr>'
+
+    html = f"""<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Comparativo de rendimiento {referencia['sufijo_archivo']}</title>
+<style>
+body{{margin:0;background:#12201e;color:#e8ede9;font-family:Georgia,serif}}
+main{{max-width:1200px;margin:32px auto;padding:32px;background:#1b2926;color:#e8ede9;box-shadow:0 8px 24px #00000066}}
+h1{{margin:0 0 6px;font-size:32px;color:#e8ede9}}
+h2{{color:#e8ede9;margin-top:28px;font-size:20px}}
+.subtitle{{color:#8ba39c;margin-bottom:24px}}
+.tabla-scroll{{overflow-x:auto;margin-top:12px;border:1px solid #30423e;border-radius:6px}}
+table{{border-collapse:collapse;font:14px sans-serif;width:100%;min-width:520px}}
+th,td{{padding:10px 14px;border-bottom:1px solid #30423e;text-align:right;white-space:nowrap}}
+th{{color:#8ba39c;font-weight:600}}
+tbody th{{text-align:left;color:#e8ede9;background:#1e352e;position:sticky;left:0;z-index:1}}
+thead th:first-child{{text-align:left;position:sticky;left:0;background:#1b2926;z-index:2}}
+tbody tr:nth-child(even) td{{background:#1e2c29}}
+.notice{{margin-top:28px;font:12px sans-serif;color:#8ba39c}}
+@media(max-width:650px){{main{{margin:0;padding:18px}}h1{{font-size:24px}}}}
+</style></head><body><main>
+<h1>Comparativo de rendimiento de FIBRAs</h1>
+<div class="subtitle">{referencia['etiqueta_periodo']} · {len(tickers_ok)} FIBRAs</div>
+<div class="tabla-scroll"><table><thead><tr><th>Indicador</th>{encabezados_html}</tr></thead>
+<tbody>{filas_resumen_html}</tbody></table></div>
+<h2>Detalle de distribuciones ({referencia['etiqueta_pagos'].lower()})</h2>
+<div class="tabla-scroll"><table><thead><tr><th>FIBRA</th><th>Fecha</th><th>Monto</th><th>Rendimiento</th></tr></thead>
+<tbody>{filas_pagos_html}</tbody></table></div>
+<div class="notice">Ficha informativa basada en datos históricos. Los pagos se identifican por ex_date. No constituye una recomendación de compra o venta; el rendimiento pasado no garantiza resultados futuros.{referencia['aviso_riesgo']}</div>
+</main></body></html>"""
+    carpeta_salida.mkdir(parents=True, exist_ok=True)
+    momento = datetime.now()
+    ruta = carpeta_salida / f"{momento:%Y%m%d_%H%M%S}_comparativo_{referencia['sufijo_archivo']}_rendimiento.html"
+    ruta.write_text(html, encoding="utf-8")
+    return ruta
+
+
+def mostrar_comparativo_rendimiento(
+    tickers_seleccionados: pd.DataFrame,
+    historiales: dict,
+    carpeta_salida: Path,
+    carpeta_export: Path,
+    año: Optional[int] = None,
+    fecha_referencia: Optional[datetime] = None,
+) -> Path:
+    """Genera, muestra y exporta a HTML el comparativo de rendimiento de todas las FIBRAs seleccionadas.
+
+    Sustituye a una ficha y un PDF por ticker por una sola tabla comparativa con la
+    misma información, mostrada en el notebook y exportada como un único archivo
+    HTML responsivo (ya no PDF) en `carpeta_export`.
+    """
+    ruta = crear_comparativo_rendimiento(tickers_seleccionados, historiales, carpeta_salida, año, fecha_referencia)
+    print(f"Comparativo de rendimiento generado: {ruta}")
+    display(HTML(ruta.read_text(encoding="utf-8")))
+    if año is not None:
+        descripcion_export, periodo_export = "rendimiento anual", str(año)
+    else:
+        _, fecha_fin = calcular_ventana_movil_12_meses(fecha_referencia)
+        descripcion_export, periodo_export = "rendimiento 12 meses", f"{fecha_fin:%Y%m%d}"
+    ruta_export = exportar_comparativo_a_html(ruta, descripcion_export, periodo_export, carpeta_export)
+    print(f"HTML exportado: {ruta_export}")
+    return ruta
+
+
+def crear_comparativo_completo_cliente(
+    tickers_seleccionados: pd.DataFrame,
+    historiales: dict,
+    carpeta_salida: Path,
+    capital_invertido: float = 10000.0,
+    marca: str = "ZAMUDIO INVESTORS",
+    año: Optional[int] = None,
+    fecha_referencia: Optional[datetime] = None,
+) -> Path:
+    """Calcula y exporta el "Comparativo de FIBRAs" (ficha completa para cliente) de
+    todas las FIBRAs seleccionadas en una sola tabla.
+
+    Reutiliza el mismo cálculo que `crear_ficha_completa_cliente`
+    (`_calcular_ficha_completa`) para cada ticker, con el mismo año calendario o la
+    misma ventana móvil de últimos 12 meses y el mismo capital de referencia
+    aplicados por igual a todos ellos (`mostrar_ficha_completa_cliente` sigue
+    disponible sin cambios para el análisis de un solo ticker). No omite ningún
+    indicador de los que ya muestra la ficha individual: incluye el resumen del
+    escenario de inversión, las distribuciones mensuales por título, el retorno
+    mensual del periodo (cuando aplica) y el detalle completo de pagos, todo como
+    tablas anchas con scroll horizontal controlado y la primera columna fija.
+    """
+    datos_por_ticker: dict[str, dict] = {}
+    for ticker in tickers_seleccionados["ticker"]:
+        historial = historiales.get(ticker)
+        if historial is None or historial.empty:
+            print(f"Aviso: se omite {ticker} del comparativo de FIBRAs: sin historial de dividendos disponible.")
+            continue
+        try:
+            datos_por_ticker[ticker] = _calcular_ficha_completa(
+                ticker, año, carpeta_salida, historial, capital_invertido, fecha_referencia
+            )
+        except Exception as error:  # noqa: BLE001 - tolerancia a fallos por ticker, a propósito
+            print(f"Aviso: no se pudo calcular la ficha completa de {ticker} para el comparativo: {error}")
+    if not datos_por_ticker:
+        raise ValueError("No hay tickers con datos suficientes para armar el comparativo de FIBRAs.")
+
+    tickers_ok = list(datos_por_ticker)
+    referencia = datos_por_ticker[tickers_ok[0]]
+    encabezados_html = "".join(f"<th>{escape(t)}</th>" for t in tickers_ok)
+
+    filas_resumen_html = "".join([
+        _fila_comparativo(tickers_ok, datos_por_ticker, "Precio de compra", lambda d: f"${d['precio_compra']:,.2f}", color_pos=_COLOR_POSITIVO_CLARO, color_neg=_COLOR_NEGATIVO_CLARO),
+        _fila_comparativo(tickers_ok, datos_por_ticker, "Precio actual", lambda d: f"${d['precio_actual']:,.2f}", color_pos=_COLOR_POSITIVO_CLARO, color_neg=_COLOR_NEGATIVO_CLARO),
+        _fila_comparativo(tickers_ok, datos_por_ticker, "Títulos", lambda d: f"{d['titulos']}", color_pos=_COLOR_POSITIVO_CLARO, color_neg=_COLOR_NEGATIVO_CLARO),
+        _fila_comparativo(tickers_ok, datos_por_ticker, "Plusvalía", lambda d: f"${d['plusvalia']:,.2f}", "plusvalia", _COLOR_POSITIVO_CLARO, _COLOR_NEGATIVO_CLARO),
+        _fila_comparativo(tickers_ok, datos_por_ticker, "Dividendo por título", lambda d: f"${d['dividendo_por_titulo']:,.4f}", color_pos=_COLOR_POSITIVO_CLARO, color_neg=_COLOR_NEGATIVO_CLARO),
+        _fila_comparativo(tickers_ok, datos_por_ticker, "Distribuciones totales", lambda d: f"${d['distribuciones_totales']:,.2f}", color_pos=_COLOR_POSITIVO_CLARO, color_neg=_COLOR_NEGATIVO_CLARO),
+        _fila_comparativo(tickers_ok, datos_por_ticker, "Retorno total", lambda d: f"${d['retorno_total']:,.2f}", "retorno_total", _COLOR_POSITIVO_CLARO, _COLOR_NEGATIVO_CLARO),
+        _fila_comparativo(tickers_ok, datos_por_ticker, "Rendimiento total", lambda d: f"{d['rendimiento_total_pct']:,.2f}%", "rendimiento_total_pct", _COLOR_POSITIVO_CLARO, _COLOR_NEGATIVO_CLARO),
+    ])
+    if referencia["usar_ventana_movil"]:
+        filas_resumen_html += "".join([
+            _fila_comparativo(tickers_ok, datos_por_ticker, "Volatilidad mensual promedio", lambda d: f'{d["riesgo"]["volatilidad_mensual_pct"]:,.2f}%', color_pos=_COLOR_POSITIVO_CLARO, color_neg=_COLOR_NEGATIVO_CLARO),
+            _fila_comparativo(tickers_ok, datos_por_ticker, "Volatilidad anualizada", lambda d: f'{d["riesgo"]["volatilidad_anualizada_pct"]:,.2f}%', color_pos=_COLOR_POSITIVO_CLARO, color_neg=_COLOR_NEGATIVO_CLARO),
+        ])
+
+    encabezados_meses_html = "".join(f"<th>{escape(m)}</th>" for m in referencia["etiquetas_meses"])
+    filas_mensual_html = "".join(
+        f"<tr><th>{escape(t)}</th>" + "".join(f"<td>${valor:,.2f}</td>" for valor in datos_por_ticker[t]["pagos_por_mes"].tolist()) + "</tr>"
+        for t in tickers_ok
+    )
+
+    seccion_riesgo_html = ""
+    if referencia["usar_ventana_movil"]:
+        filas_riesgo_html = "".join(
+            f"<tr><th>{escape(t)}</th>" + "".join(
+                f'<td><span style="color:{_COLOR_NEGATIVO_CLARO if retorno < 0 else _COLOR_POSITIVO_CLARO};font-weight:600">{retorno:,.2f}%</span></td>'
+                for retorno in datos_por_ticker[t]["riesgo"]["retornos_mensuales_pct"].tolist()
+            ) + "</tr>"
+            for t in tickers_ok
+        )
+        seccion_riesgo_html = f"""
+<h2 class="section-title">Retorno total mensual por FIBRA</h2>
+<div class="tabla-scroll"><table><thead><tr><th>FIBRA</th>{encabezados_meses_html}</tr></thead>
+<tbody>{filas_riesgo_html}</tbody></table></div>
+<div class="period-note">Retorno total mensual (variación de precio + dividendos del mes); verde = mes positivo, rojo = mes negativo.</div>"""
+
+    filas_detalle = []
+    for t in tickers_ok:
+        detalle = datos_por_ticker[t]["detalle_pagos"].sort_values("ex_date")
+        for fila in detalle.itertuples():
+            filas_detalle.append(
+                f"<tr><td>{escape(t)}</td><td>{_fecha_corta_es(fila.ex_date)}</td>"
+                f'<td class="num">${fila.amount_mxn:,.4f}</td><td class="num">{fila.yield_pct:,.2f}%</td></tr>'
+            )
+    filas_detalle_html = "".join(filas_detalle) if filas_detalle else '<tr><td colspan="4">Sin distribuciones en el periodo.</td></tr>'
+
+    html = f"""<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Comparativo de FIBRAs {referencia['sufijo_archivo']}</title>
+<style>
+body{{margin:0;background:#f4f6f5;font-family:'Segoe UI',Arial,sans-serif;color:#25332e}}
+main{{max-width:1200px;margin:24px auto;background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 6px 18px #00000022;color:#1c2a25}}
+.header{{background:#2f5d50;color:#fff;text-align:center;padding:22px 16px}}
+.header h1{{margin:0;font-size:24px;letter-spacing:1px}}
+.header .subtitle{{margin-top:4px;font-size:13px;color:#cfe3da}}
+.section{{padding:18px 22px}}
+h2.section-title{{font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:#3a6b5e;border-bottom:1px solid #e3ece8;padding-bottom:6px;margin:18px 0 12px}}
+.tabla-scroll{{overflow-x:auto;border:1px solid #e3ece8;border-radius:6px}}
+table{{border-collapse:collapse;width:100%;min-width:520px;font-size:13px}}
+th,td{{padding:9px 12px;border-bottom:1px solid #eef2f0;text-align:right;white-space:nowrap}}
+th{{color:#55675f;font-size:11px;text-transform:uppercase;letter-spacing:.3px}}
+tbody th{{text-align:left;color:#1c2a25;background:#f7faf8;position:sticky;left:0;z-index:1;text-transform:none;font-weight:600}}
+thead th:first-child{{text-align:left;position:sticky;left:0;background:#ffffff;z-index:2}}
+tbody tr:nth-child(even) td{{background:#f7faf8}}
+.period-note{{font-size:11px;color:#55675f;font-style:italic;margin-top:8px}}
+.disclaimer{{font-size:9px;color:#5c6b65;text-align:center;padding:0 22px 12px;line-height:1.4}}
+.footer{{background:#22463c;color:#fff;text-align:center;padding:12px;font-size:12px;letter-spacing:2px}}
+@media(max-width:650px){{.section{{padding:14px}}.header h1{{font-size:20px}}}}
+</style></head>
+<body><main>
+<div class="header"><h1>Comparativo de FIBRAs</h1><div class="subtitle">{referencia['etiqueta_periodo']} · Capital de referencia: ${capital_invertido:,.0f} · {len(tickers_ok)} FIBRAs</div></div>
+<div class="section">
+<h2 class="section-title">Resumen del escenario de inversión</h2>
+<div class="tabla-scroll"><table><thead><tr><th>Indicador</th>{encabezados_html}</tr></thead>
+<tbody>{filas_resumen_html}</tbody></table></div>
+</div>
+<div class="section">
+<h2 class="section-title">{escape(referencia['etiqueta_dist'])} (por título, por mes)</h2>
+<div class="tabla-scroll"><table><thead><tr><th>FIBRA</th>{encabezados_meses_html}</tr></thead>
+<tbody>{filas_mensual_html}</tbody></table></div>
+{seccion_riesgo_html}
+</div>
+<div class="section">
+<h2 class="section-title">Detalle de distribuciones</h2>
+<div class="tabla-scroll"><table><thead><tr><th>FIBRA</th><th>Fecha</th><th>Monto por título</th><th>Rendimiento</th></tr></thead>
+<tbody>{filas_detalle_html}</tbody></table></div>
+</div>
+<div class="disclaimer">Ficha informativa basada en datos históricos.<br>No constituye recomendaciones de inversión ni ofertas de compra o venta de activos financieros.<br>Rendimientos pasados no garantizan rendimientos futuros.{referencia['aviso_riesgo']}</div>
+<div class="footer">{escape(marca)}</div>
+</main></body></html>"""
+    carpeta_salida.mkdir(parents=True, exist_ok=True)
+    momento = datetime.now()
+    ruta = carpeta_salida / f"{momento:%Y%m%d_%H%M%S}_comparativo_{referencia['sufijo_archivo']}_ficha_completa_cliente.html"
+    ruta.write_text(html, encoding="utf-8")
+    return ruta
+
+
+def mostrar_comparativo_completo_cliente(
+    tickers_seleccionados: pd.DataFrame,
+    historiales: dict,
+    carpeta_salida: Path,
+    carpeta_export: Path,
+    capital_invertido: float = 10000.0,
+    marca: str = "ZAMUDIO INVESTORS",
+    año: Optional[int] = None,
+    fecha_referencia: Optional[datetime] = None,
+) -> Path:
+    """Genera, muestra y exporta a HTML el "Comparativo de FIBRAs" (ficha completa
+    para cliente) de todas las FIBRAs seleccionadas.
+
+    Sustituye a una ficha y un PDF por ticker por una sola tabla comparativa con la
+    misma información, mostrada en el notebook y exportada como un único archivo
+    HTML responsivo (ya no PDF) en `carpeta_export`.
+    """
+    ruta = crear_comparativo_completo_cliente(
+        tickers_seleccionados, historiales, carpeta_salida, capital_invertido, marca, año, fecha_referencia
+    )
+    print(f"Comparativo de FIBRAs generado: {ruta}")
+    display(HTML(ruta.read_text(encoding="utf-8")))
+    if año is not None:
+        descripcion_export, periodo_export = "ficha completa cliente", str(año)
+    else:
+        _, fecha_fin = calcular_ventana_movil_12_meses(fecha_referencia)
+        descripcion_export, periodo_export = "ficha completa 12 meses", f"{fecha_fin:%Y%m%d}"
+    ruta_export = exportar_comparativo_a_html(ruta, descripcion_export, periodo_export, carpeta_export)
+    print(f"HTML exportado: {ruta_export}")
+    return ruta
