@@ -1605,29 +1605,32 @@ def resumen_precio_periodicidad(
     return tabla
 
 
-_COLOR_POSITIVO_OSCURO = "#5fd9b0"
-_COLOR_NEGATIVO_OSCURO = "#f2836a"
-_COLOR_POSITIVO_CLARO = "#2f8f6f"
-_COLOR_NEGATIVO_CLARO = "#c0503c"
+def _tabla_html_comparativa(tickers_ok: list[str], resumenes: dict[str, pd.DataFrame]) -> str:
+    """Arma el `<thead>`/`<tbody>` de una tabla comparativa (indicadores en filas,
+    FIBRAs en columnas) a partir de un resumen Indicador/Valor/`_clase` ya armado
+    por ticker (`armar_resumen_rendimiento` o `armar_resumen_ficha_completa`).
 
-
-def _fila_comparativo(tickers_ok: list[str], datos_por_ticker: dict, etiqueta: str, formato, campo_color: Optional[str] = None, color_pos: str = _COLOR_POSITIVO_OSCURO, color_neg: str = _COLOR_NEGATIVO_OSCURO) -> str:
-    """Arma una fila `<tr>` de una tabla comparativa: una etiqueta y una celda por FIBRA.
-
-    Si `campo_color` se indica, el texto de cada celda se resalta en `color_pos` o
-    `color_neg` según el signo del valor numérico en `datos_por_ticker[ticker][campo_color]`.
+    Todas las FIBRAs de un mismo comparativo comparten año/ventana, así que sus
+    resúmenes traen las mismas etiquetas en el mismo orden; se toman de cualquiera
+    de ellos. `_clase` ("pos"/"neg"/"") resalta la celda con la clase CSS del mismo
+    nombre ya definida en la plantilla, en vez de un color inline por celda.
     Compartida por `crear_comparativo_rendimiento` y `crear_comparativo_completo_cliente`
     para que ambas tablas comparativas se vean y se comporten igual.
     """
-    celdas = []
-    for ticker in tickers_ok:
-        datos = datos_por_ticker[ticker]
-        texto = escape(formato(datos))
-        if campo_color is not None:
-            color = color_neg if datos[campo_color] < 0 else color_pos
-            texto = f'<span style="color:{color};font-weight:600">{texto}</span>'
-        celdas.append(f"<td>{texto}</td>")
-    return f"<tr><th>{escape(etiqueta)}</th>{''.join(celdas)}</tr>"
+    indexados = {ticker: resumen.set_index("Indicador") for ticker, resumen in resumenes.items()}
+    etiquetas = next(iter(resumenes.values()))["Indicador"]
+    encabezados = "".join(f"<th>{escape(t)}</th>" for t in tickers_ok)
+    filas = []
+    for indicador in etiquetas:
+        celdas = []
+        for ticker in tickers_ok:
+            fila = indexados[ticker].loc[indicador]
+            texto = escape(str(fila["Valor"]))
+            if fila["_clase"]:
+                texto = f'<span class="{fila["_clase"]}">{texto}</span>'
+            celdas.append(f"<td>{texto}</td>")
+        filas.append(f"<tr><th>{escape(indicador)}</th>{''.join(celdas)}</tr>")
+    return f"<thead><tr><th>Indicador</th>{encabezados}</tr></thead><tbody>{''.join(filas)}</tbody>"
 
 
 def crear_comparativo_rendimiento(
@@ -1664,32 +1667,15 @@ def crear_comparativo_rendimiento(
 
     tickers_ok = list(datos_por_ticker)
     referencia = datos_por_ticker[tickers_ok[0]]
-    encabezados_html = "".join(f"<th>{escape(t)}</th>" for t in tickers_ok)
 
-    filas_resumen_html = "".join([
-        _fila_comparativo(tickers_ok, datos_por_ticker, "Periodo (cierres)", lambda d: f"{d['fecha_inicial']} a {d['fecha_final']}"),
-        _fila_comparativo(tickers_ok, datos_por_ticker, "Precio inicial", lambda d: f"${d['precio_inicial']:,.2f} MXN"),
-        _fila_comparativo(tickers_ok, datos_por_ticker, "Precio final", lambda d: f"${d['precio_final']:,.2f} MXN"),
-        _fila_comparativo(tickers_ok, datos_por_ticker, "Variación de precio", lambda d: f"{d['rendimiento_capital']:,.2f}%", "rendimiento_capital"),
-        _fila_comparativo(tickers_ok, datos_por_ticker, "Rendimiento por dividendos", lambda d: f"{d['rendimiento_dividendos']:,.2f}%"),
-        _fila_comparativo(tickers_ok, datos_por_ticker, "Rendimiento total", lambda d: f"{d['rendimiento_total']:,.2f}%", "rendimiento_total"),
-        _fila_comparativo(tickers_ok, datos_por_ticker, "Ganancia total", lambda d: f"${d['ganancia_total']:,.2f} MXN", "ganancia_total"),
-        _fila_comparativo(tickers_ok, datos_por_ticker, "Dividendos recibidos", lambda d: f"${d['total_dividendos']:,.4f} MXN"),
-        _fila_comparativo(tickers_ok, datos_por_ticker, "Variación de capital", lambda d: f"${d['variacion_capital']:,.2f} MXN", "variacion_capital"),
-    ])
-    if referencia["usar_ventana_movil"]:
-        filas_resumen_html += _fila_comparativo(
-            tickers_ok, datos_por_ticker, "Riesgo mensual promedio", lambda d: f'{d["riesgo"]["volatilidad_mensual_pct"]:,.2f}%'
-        )
+    resumenes = {ticker: armar_resumen_rendimiento(datos_por_ticker[ticker]) for ticker in tickers_ok}
+    tabla_resumen_html = _tabla_html_comparativa(tickers_ok, resumenes)
 
     filas_pagos = []
     for ticker in tickers_ok:
-        pagos = datos_por_ticker[ticker]["pagos"].sort_values("ex_date")
-        for fila in pagos.itertuples():
-            filas_pagos.append(
-                f"<tr><td>{escape(ticker)}</td><td>{fila.ex_date:%Y-%m-%d}</td>"
-                f'<td class="num">${fila.amount_mxn:,.4f}</td><td class="num">{fila.yield_pct:,.2f}%</td></tr>'
-            )
+        detalle = armar_detalle_pagos_ficha(datos_por_ticker[ticker]["pagos"])
+        for fecha, monto, rendimiento in detalle.itertuples(index=False, name=None):
+            filas_pagos.append(f"<tr><td>{escape(ticker)}</td><td>{escape(fecha)}</td><td>{escape(monto)}</td><td>{escape(rendimiento)}</td></tr>")
     filas_pagos_html = "".join(filas_pagos) if filas_pagos else '<tr><td colspan="4">Sin distribuciones en el periodo.</td></tr>'
 
     html = f"""<!doctype html>
@@ -1703,18 +1689,19 @@ h2{{color:#e8ede9;margin-top:28px;font-size:20px}}
 .subtitle{{color:#8ba39c;margin-bottom:24px}}
 .tabla-scroll{{overflow-x:auto;margin-top:12px;border:1px solid #30423e;border-radius:6px}}
 table{{border-collapse:collapse;font:14px sans-serif;width:100%;min-width:520px}}
-th,td{{padding:10px 14px;border-bottom:1px solid #30423e;text-align:right;white-space:nowrap}}
+th,td{{padding:10px 14px;border-bottom:1px solid #30423e;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}}
 th{{color:#8ba39c;font-weight:600}}
-tbody th{{text-align:left;color:#e8ede9;background:#1e352e;position:sticky;left:0;z-index:1}}
+tbody th{{text-align:left;color:#e8ede9;background:#1e352e;position:sticky;left:0;z-index:1;font-variant-numeric:normal}}
 thead th:first-child{{text-align:left;position:sticky;left:0;background:#1b2926;z-index:2}}
 tbody tr:nth-child(even) td{{background:#1e2c29}}
+.pos{{color:#5fd9b0;font-weight:600}}
+.neg{{color:#f2836a;font-weight:600}}
 .notice{{margin-top:28px;font:12px sans-serif;color:#8ba39c}}
 @media(max-width:650px){{main{{margin:0;padding:18px}}h1{{font-size:24px}}}}
 </style></head><body><main>
 <h1>Comparativo de rendimiento de FIBRAs</h1>
 <div class="subtitle">{referencia['etiqueta_periodo']} · {len(tickers_ok)} FIBRAs</div>
-<div class="tabla-scroll"><table><thead><tr><th>Indicador</th>{encabezados_html}</tr></thead>
-<tbody>{filas_resumen_html}</tbody></table></div>
+<div class="tabla-scroll"><table>{tabla_resumen_html}</table></div>
 <h2>Detalle de distribuciones ({referencia['etiqueta_pagos'].lower()})</h2>
 <div class="tabla-scroll"><table><thead><tr><th>FIBRA</th><th>Fecha</th><th>Monto</th><th>Rendimiento</th></tr></thead>
 <tbody>{filas_pagos_html}</tbody></table></div>
@@ -1793,27 +1780,13 @@ def crear_comparativo_completo_cliente(
 
     tickers_ok = list(datos_por_ticker)
     referencia = datos_por_ticker[tickers_ok[0]]
-    encabezados_html = "".join(f"<th>{escape(t)}</th>" for t in tickers_ok)
 
-    filas_resumen_html = "".join([
-        _fila_comparativo(tickers_ok, datos_por_ticker, "Precio de compra", lambda d: f"${d['precio_compra']:,.2f}", color_pos=_COLOR_POSITIVO_CLARO, color_neg=_COLOR_NEGATIVO_CLARO),
-        _fila_comparativo(tickers_ok, datos_por_ticker, "Precio actual", lambda d: f"${d['precio_actual']:,.2f}", color_pos=_COLOR_POSITIVO_CLARO, color_neg=_COLOR_NEGATIVO_CLARO),
-        _fila_comparativo(tickers_ok, datos_por_ticker, "Títulos", lambda d: f"{d['titulos']}", color_pos=_COLOR_POSITIVO_CLARO, color_neg=_COLOR_NEGATIVO_CLARO),
-        _fila_comparativo(tickers_ok, datos_por_ticker, "Plusvalía", lambda d: f"${d['plusvalia']:,.2f}", "plusvalia", _COLOR_POSITIVO_CLARO, _COLOR_NEGATIVO_CLARO),
-        _fila_comparativo(tickers_ok, datos_por_ticker, "Dividendo por título", lambda d: f"${d['dividendo_por_titulo']:,.4f}", color_pos=_COLOR_POSITIVO_CLARO, color_neg=_COLOR_NEGATIVO_CLARO),
-        _fila_comparativo(tickers_ok, datos_por_ticker, "Distribuciones totales", lambda d: f"${d['distribuciones_totales']:,.2f}", color_pos=_COLOR_POSITIVO_CLARO, color_neg=_COLOR_NEGATIVO_CLARO),
-        _fila_comparativo(tickers_ok, datos_por_ticker, "Retorno total", lambda d: f"${d['retorno_total']:,.2f}", "retorno_total", _COLOR_POSITIVO_CLARO, _COLOR_NEGATIVO_CLARO),
-        _fila_comparativo(tickers_ok, datos_por_ticker, "Rendimiento total", lambda d: f"{d['rendimiento_total_pct']:,.2f}%", "rendimiento_total_pct", _COLOR_POSITIVO_CLARO, _COLOR_NEGATIVO_CLARO),
-    ])
-    if referencia["usar_ventana_movil"]:
-        filas_resumen_html += "".join([
-            _fila_comparativo(tickers_ok, datos_por_ticker, "Volatilidad mensual promedio", lambda d: f'{d["riesgo"]["volatilidad_mensual_pct"]:,.2f}%', color_pos=_COLOR_POSITIVO_CLARO, color_neg=_COLOR_NEGATIVO_CLARO),
-            _fila_comparativo(tickers_ok, datos_por_ticker, "Volatilidad anualizada", lambda d: f'{d["riesgo"]["volatilidad_anualizada_pct"]:,.2f}%', color_pos=_COLOR_POSITIVO_CLARO, color_neg=_COLOR_NEGATIVO_CLARO),
-        ])
+    resumenes = {ticker: armar_resumen_ficha_completa(datos_por_ticker[ticker], capital_invertido) for ticker in tickers_ok}
+    tabla_resumen_html = _tabla_html_comparativa(tickers_ok, resumenes)
 
     encabezados_meses_html = "".join(f"<th>{escape(m)}</th>" for m in referencia["etiquetas_meses"])
     filas_mensual_html = "".join(
-        f"<tr><th>{escape(t)}</th>" + "".join(f"<td>${valor:,.2f}</td>" for valor in datos_por_ticker[t]["pagos_por_mes"].tolist()) + "</tr>"
+        f"<tr><th>{escape(t)}</th>" + "".join(f"<td>{_fmt_moneda(valor)}</td>" for valor in datos_por_ticker[t]["pagos_por_mes"].tolist()) + "</tr>"
         for t in tickers_ok
     )
 
@@ -1821,7 +1794,7 @@ def crear_comparativo_completo_cliente(
     if referencia["usar_ventana_movil"]:
         filas_riesgo_html = "".join(
             f"<tr><th>{escape(t)}</th>" + "".join(
-                f'<td><span style="color:{_COLOR_NEGATIVO_CLARO if retorno < 0 else _COLOR_POSITIVO_CLARO};font-weight:600">{retorno:,.2f}%</span></td>'
+                f'<td><span class="{_clase_signo(retorno)}">{_fmt_pct(retorno)}</span></td>'
                 for retorno in datos_por_ticker[t]["riesgo"]["retornos_mensuales_pct"].tolist()
             ) + "</tr>"
             for t in tickers_ok
@@ -1834,12 +1807,9 @@ def crear_comparativo_completo_cliente(
 
     filas_detalle = []
     for t in tickers_ok:
-        detalle = datos_por_ticker[t]["detalle_pagos"].sort_values("ex_date")
-        for fila in detalle.itertuples():
-            filas_detalle.append(
-                f"<tr><td>{escape(t)}</td><td>{_fecha_corta_es(fila.ex_date)}</td>"
-                f'<td class="num">${fila.amount_mxn:,.4f}</td><td class="num">{fila.yield_pct:,.2f}%</td></tr>'
-            )
+        detalle = armar_detalle_pagos_ficha(datos_por_ticker[t]["detalle_pagos"])
+        for fecha, monto, rendimiento in detalle.itertuples(index=False, name=None):
+            filas_detalle.append(f"<tr><td>{escape(t)}</td><td>{escape(fecha)}</td><td>{escape(monto)}</td><td>{escape(rendimiento)}</td></tr>")
     filas_detalle_html = "".join(filas_detalle) if filas_detalle else '<tr><td colspan="4">Sin distribuciones en el periodo.</td></tr>'
 
     html = f"""<!doctype html>
@@ -1855,11 +1825,13 @@ main{{max-width:1200px;margin:24px auto;background:#ffffff;border-radius:10px;ov
 h2.section-title{{font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:#3a6b5e;border-bottom:1px solid #e3ece8;padding-bottom:6px;margin:18px 0 12px}}
 .tabla-scroll{{overflow-x:auto;border:1px solid #e3ece8;border-radius:6px}}
 table{{border-collapse:collapse;width:100%;min-width:520px;font-size:13px}}
-th,td{{padding:9px 12px;border-bottom:1px solid #eef2f0;text-align:right;white-space:nowrap}}
+th,td{{padding:9px 12px;border-bottom:1px solid #eef2f0;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}}
 th{{color:#55675f;font-size:11px;text-transform:uppercase;letter-spacing:.3px}}
-tbody th{{text-align:left;color:#1c2a25;background:#f7faf8;position:sticky;left:0;z-index:1;text-transform:none;font-weight:600}}
+tbody th{{text-align:left;color:#1c2a25;background:#f7faf8;position:sticky;left:0;z-index:1;text-transform:none;font-weight:600;font-variant-numeric:normal}}
 thead th:first-child{{text-align:left;position:sticky;left:0;background:#ffffff;z-index:2}}
 tbody tr:nth-child(even) td{{background:#f7faf8}}
+.pos{{color:#2f8f6f;font-weight:600}}
+.neg{{color:#c0503c;font-weight:600}}
 .period-note{{font-size:11px;color:#55675f;font-style:italic;margin-top:8px}}
 .disclaimer{{font-size:9px;color:#5c6b65;text-align:center;padding:0 22px 12px;line-height:1.4}}
 .footer{{background:#22463c;color:#fff;text-align:center;padding:12px;font-size:12px;letter-spacing:2px}}
@@ -1869,8 +1841,7 @@ tbody tr:nth-child(even) td{{background:#f7faf8}}
 <div class="header"><h1>Comparativo de FIBRAs</h1><div class="subtitle">{referencia['etiqueta_periodo']} · Capital de referencia: ${capital_invertido:,.0f} · {len(tickers_ok)} FIBRAs</div></div>
 <div class="section">
 <h2 class="section-title">Resumen del escenario de inversión</h2>
-<div class="tabla-scroll"><table><thead><tr><th>Indicador</th>{encabezados_html}</tr></thead>
-<tbody>{filas_resumen_html}</tbody></table></div>
+<div class="tabla-scroll"><table>{tabla_resumen_html}</table></div>
 </div>
 <div class="section">
 <h2 class="section-title">{escape(referencia['etiqueta_dist'])} (por título, por mes)</h2>

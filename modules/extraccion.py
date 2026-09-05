@@ -172,6 +172,26 @@ def _descargar_cierres_anuales(ticker_yahoo: str, año: int) -> pd.Series:
     return _CACHE_CIERRES_ANUALES[clave].copy()
 
 
+def _procesar_precios_descargados(precios, ticker_yahoo: str, mensaje_si_vacio: str) -> pd.Series:
+    """Extrae y normaliza la serie de cierres diarios de una respuesta de `yf.download`.
+
+    Aplana las columnas si vienen en `MultiIndex` (yfinance las devuelve así para
+    algunas versiones/parámetros), valida que exista la columna `Close` y deja el
+    índice de fechas sin huso horario y a medianoche. Compartida por las tres
+    descargas de precios del proyecto (año calendario, rango arbitrario e
+    histórico completo) para no repetir cuatro veces la misma limpieza.
+    """
+    if precios is None or precios.empty:
+        raise ValueError(mensaje_si_vacio)
+    if isinstance(precios.columns, pd.MultiIndex):
+        precios.columns = precios.columns.get_level_values(0)
+    if "Close" not in precios:
+        raise ValueError(f"La respuesta de precios de {ticker_yahoo} no contiene cierre.")
+    cierres = precios["Close"].dropna()
+    cierres.index = pd.to_datetime(cierres.index).tz_localize(None).normalize()
+    return cierres
+
+
 def _descargar_cierres_anuales_sin_cachear(ticker_yahoo: str, año: int) -> pd.Series:
     inicio = pd.Timestamp(year=año, month=1, day=1)
     fin = pd.Timestamp(year=año + 1, month=1, day=1)
@@ -183,15 +203,7 @@ def _descargar_cierres_anuales_sin_cachear(ticker_yahoo: str, año: int) -> pd.S
         progress=False,
         threads=False,
     )
-    if precios is None or precios.empty:
-        raise ValueError(f"No hay precios disponibles para {ticker_yahoo} en {año}.")
-    if isinstance(precios.columns, pd.MultiIndex):
-        precios.columns = precios.columns.get_level_values(0)
-    if "Close" not in precios:
-        raise ValueError(f"La respuesta de precios de {ticker_yahoo} no contiene cierre.")
-    cierres = precios["Close"].dropna()
-    cierres.index = pd.to_datetime(cierres.index).tz_localize(None).normalize()
-    return cierres
+    return _procesar_precios_descargados(precios, ticker_yahoo, f"No hay precios disponibles para {ticker_yahoo} en {año}.")
 
 
 _CACHE_CIERRES_RANGO: dict[tuple[str, pd.Timestamp, pd.Timestamp], pd.Series] = {}
@@ -225,17 +237,9 @@ def _descargar_cierres_rango_sin_cachear(ticker_yahoo: str, inicio: pd.Timestamp
         progress=False,
         threads=False,
     )
-    if precios is None or precios.empty:
-        raise ValueError(
-            f"No hay precios disponibles para {ticker_yahoo} entre {inicio:%Y-%m-%d} y {fin:%Y-%m-%d}."
-        )
-    if isinstance(precios.columns, pd.MultiIndex):
-        precios.columns = precios.columns.get_level_values(0)
-    if "Close" not in precios:
-        raise ValueError(f"La respuesta de precios de {ticker_yahoo} no contiene cierre.")
-    cierres = precios["Close"].dropna()
-    cierres.index = pd.to_datetime(cierres.index).tz_localize(None).normalize()
-    return cierres
+    return _procesar_precios_descargados(
+        precios, ticker_yahoo, f"No hay precios disponibles para {ticker_yahoo} entre {inicio:%Y-%m-%d} y {fin:%Y-%m-%d}."
+    )
 
 
 def obtener_precio_actual(ticker: str) -> float:
@@ -262,15 +266,7 @@ def _descargar_historico_completo(ticker_yahoo: str) -> pd.Series:
     cachea: se descarga una sola vez por corrida de esa ficha.
     """
     precios = yf.download(ticker_yahoo, period="max", auto_adjust=False, progress=False, threads=False)
-    if precios is None or precios.empty:
-        raise ValueError(f"No hay precios históricos disponibles para {ticker_yahoo}.")
-    if isinstance(precios.columns, pd.MultiIndex):
-        precios.columns = precios.columns.get_level_values(0)
-    if "Close" not in precios:
-        raise ValueError(f"La respuesta de precios de {ticker_yahoo} no contiene cierre.")
-    cierres = precios["Close"].dropna()
-    cierres.index = pd.to_datetime(cierres.index).tz_localize(None).normalize()
-    return cierres
+    return _procesar_precios_descargados(precios, ticker_yahoo, f"No hay precios históricos disponibles para {ticker_yahoo}.")
 
 
 def obtener_distribuciones(ticker: str, carpeta_salida: Path, intentos: int = 3) -> pd.DataFrame:
