@@ -284,7 +284,7 @@ def crear_ficha_rendimiento(
     carpeta_salida: Path,
     historial: Optional[pd.DataFrame] = None,
     fecha_referencia: Optional[datetime] = None,
-) -> Path:
+) -> tuple[Path, dict]:
     """Calcula y exporta una ficha HTML de rendimiento total para un año calendario.
 
     Si `fecha_referencia` se especifica, `año` se ignora y el periodo analizado es,
@@ -294,6 +294,11 @@ def crear_ficha_rendimiento(
     agrega además el riesgo mensual promedio del periodo (volatilidad del retorno
     total mensual) como cifra destacada junto al rendimiento total; el modo de año
     calendario (`fecha_referencia=None`, el de siempre) no se modifica.
+
+    Devuelve `(ruta, datos)`: `ruta` es el HTML exportado a `carpeta_salida`; `datos`
+    es el diccionario de `_calcular_rendimiento` con los mismos indicadores ya
+    mostrados en la ficha, para que otra exportación (p. ej. `exportar_ficha_html`)
+    los reutilice sin recalcularlos ni arriesgar que diverjan.
     """
     datos = _calcular_rendimiento(ticker, año, carpeta_salida, historial, fecha_referencia)
     ticker_base = datos["ticker_base"]
@@ -347,7 +352,7 @@ body{{margin:0;background:#12201e;color:#e8ede9;font-family:Georgia,serif}}main{
     momento = datetime.now()
     ruta = carpeta_salida / f"{momento:%Y%m%d_%H%M%S}_{ticker_base}_{sufijo_archivo}_ficha_rendimiento.html"
     ruta.write_text(html, encoding="utf-8")
-    return ruta
+    return ruta, datos
 
 
 _MESES_ES = {
@@ -489,7 +494,7 @@ def crear_ficha_completa_cliente(
     capital_invertido: float = 10000.0,
     marca: str = "ZAMUDIO INVESTORS",
     fecha_referencia: Optional[datetime] = None,
-) -> Path:
+) -> tuple[Path, dict]:
     """Calcula y exporta la ficha HTML completa anual para el cliente, con datos reales de un ticker/año.
 
     A diferencia de `crear_ficha_rendimiento` (que ya no se modifica), esta ficha usa
@@ -506,6 +511,11 @@ def crear_ficha_completa_cliente(
     agrega, además, una sección de riesgo del periodo (volatilidad anualizada del
     retorno total mensual, con la serie de los 12 retornos mensuales en barras);
     el modo de año calendario (por defecto) no se modifica.
+
+    Devuelve `(ruta, datos)`: `ruta` es el HTML exportado a `carpeta_salida`; `datos`
+    es el diccionario de `_calcular_ficha_completa` con los mismos indicadores ya
+    mostrados en la ficha, para que otra exportación (p. ej. `exportar_ficha_html`)
+    los reutilice sin recalcularlos ni arriesgar que diverjan.
     """
     datos = _calcular_ficha_completa(ticker, año, carpeta_salida, historial, capital_invertido, fecha_referencia)
     ticker_base = datos["ticker_base"]
@@ -660,7 +670,7 @@ table.resumen td.valor{{text-align:right;font-weight:600}}
     momento = datetime.now()
     ruta = carpeta_salida / f"{momento:%Y%m%d_%H%M%S}_{ticker_base}_{sufijo_archivo}_ficha_completa_cliente.html"
     ruta.write_text(html, encoding="utf-8")
-    return ruta
+    return ruta, datos
 
 
 _ETIQUETAS_INDICADORES_MULTIPERIODO = [
@@ -810,14 +820,19 @@ def mostrar_ficha_multiperiodo(
     carpeta_salida: Path,
     historial: Optional[pd.DataFrame] = None,
     fecha_referencia: Optional[datetime] = None,
-) -> Path:
-    """Genera la ficha comparativa multi-periodo con `crear_ficha_multiperiodo` y la muestra en el notebook."""
+) -> tuple[Path, pd.DataFrame]:
+    """Genera la ficha comparativa multi-periodo con `crear_ficha_multiperiodo` y la muestra en el notebook.
+
+    Devuelve `(ruta, tabla)`: `ruta` es el HTML exportado; `tabla` es el mismo
+    DataFrame ya mostrado en el notebook, para que otra exportación (p. ej.
+    `exportar_ficha_html`) lo reutilice sin recalcularlo.
+    """
     tabla, ruta = crear_ficha_multiperiodo(ticker, carpeta_salida, historial, fecha_referencia)
     ticker_base = _normalizar_ticker(ticker)
     print(f"Ficha comparativa de rendimiento multi-periodo: {ticker_base}")
     print(f"Ficha multi-periodo generada: {ruta}")
     display(tabla)
-    return ruta
+    return ruta, tabla
 
 
 def ejecutar_extraccion_indice(
@@ -865,16 +880,17 @@ def mostrar_ficha_rendimiento(
     carpeta_salida: Path,
     historial: Optional[pd.DataFrame] = None,
     fecha_referencia: Optional[datetime] = None,
-) -> Path:
+) -> tuple[Path, dict]:
     """Genera la ficha de rendimiento con `crear_ficha_rendimiento` y la muestra en el notebook.
 
     Ver `crear_ficha_rendimiento` para el modo de ventana móvil de últimos 12 meses
     (`fecha_referencia`, o `año=None`), que coexiste con el modo de año calendario.
+    Devuelve `(ruta, datos)`: ver `crear_ficha_rendimiento`.
     """
-    ruta = crear_ficha_rendimiento(ticker, año, carpeta_salida, historial, fecha_referencia)
+    ruta, datos = crear_ficha_rendimiento(ticker, año, carpeta_salida, historial, fecha_referencia)
     print(f"Ficha generada: {ruta}")
     display(HTML(ruta.read_text(encoding="utf-8")))
-    return ruta
+    return ruta, datos
 
 
 def mostrar_ficha_completa_cliente(
@@ -885,20 +901,423 @@ def mostrar_ficha_completa_cliente(
     capital_invertido: float = 10000.0,
     marca: str = "ZAMUDIO INVESTORS",
     fecha_referencia: Optional[datetime] = None,
-) -> Path:
+) -> tuple[Path, dict]:
     """Genera la ficha completa anual para el cliente con `crear_ficha_completa_cliente` y la muestra en el notebook.
 
     Ver `crear_ficha_completa_cliente` para el modo de ventana móvil de últimos 12
     meses (`fecha_referencia`, o `año=None`), que coexiste con el modo de año
-    calendario.
+    calendario. Devuelve `(ruta, datos)`: ver `crear_ficha_completa_cliente`.
     """
-    ruta = crear_ficha_completa_cliente(ticker, año, carpeta_salida, historial, capital_invertido, marca, fecha_referencia)
+    ruta, datos = crear_ficha_completa_cliente(
+        ticker, año, carpeta_salida, historial, capital_invertido, marca, fecha_referencia
+    )
     print(f"Ficha completa generada: {ruta}")
     display(HTML(ruta.read_text(encoding="utf-8")))
-    return ruta
+    return ruta, datos
 
 
 _PATRON_TIMESTAMP_FICHA = re.compile(r"^(\d{8})_(\d{6})_")
+
+
+def extraer_fecha_consulta(ruta_ficha: Path) -> datetime:
+    """Extrae la fecha/hora de consulta de datos embebida en el nombre de una ficha ya generada.
+
+    Todas las fichas del proyecto (`crear_ficha_rendimiento`, `crear_ficha_completa_cliente`,
+    `crear_ficha_multiperiodo`) escriben su HTML con el prefijo `YYYYMMDD_HHMMSS_` en
+    el momento en que se descargan los datos que la alimentan; `exportar_ficha_a_pdf`
+    ya reutiliza ese mismo prefijo para nombrar el PDF. Reutilizarlo aquí también
+    garantiza que el HTML exportado (`exportar_ficha_html`) muestre exactamente la
+    misma fecha/hora de consulta que el PDF de esa misma ficha, sin generarla de
+    nuevo con `datetime.now()`.
+    """
+    coincidencia = _PATRON_TIMESTAMP_FICHA.match(ruta_ficha.name)
+    if not coincidencia:
+        raise ValueError(f"'{ruta_ficha.name}' no tiene el prefijo de fecha/hora esperado (YYYYMMDD_HHMMSS_).")
+    return datetime.strptime(coincidencia.group(1) + coincidencia.group(2), "%Y%m%d%H%M%S")
+
+
+def _fmt_moneda(valor, decimales: int = 2, signo: bool = False) -> str:
+    """Formatea un monto en pesos: separador de miles, decimales fijos y sufijo MXN.
+
+    `NaN`/`None` se muestran como "—" (nunca "NaN" ni vacío). Si `signo` es `True`,
+    los valores positivos llevan un "+" explícito (para montos que pueden ser
+    ganancia o pérdida); los negativos siempre muestran "-", tenga o no `signo=True`.
+    """
+    if valor is None or pd.isna(valor):
+        return "—"
+    prefijo = "+" if signo and valor > 0 else ("-" if valor < 0 else "")
+    return f"{prefijo}${abs(valor):,.{decimales}f} MXN"
+
+
+def _fmt_pct(valor, decimales: int = 2) -> str:
+    """Formatea un porcentaje con signo explícito siempre (`+2.35%` / `-1.08%`) y "—" para NaN/None."""
+    if valor is None or pd.isna(valor):
+        return "—"
+    prefijo = "+" if valor >= 0 else "-"
+    return f"{prefijo}{abs(valor):,.{decimales}f}%"
+
+
+def _clase_signo(valor) -> str:
+    """Clase CSS ("pos"/"neg") según el signo de `valor`, o "" si es NaN/None (sin resaltar)."""
+    if valor is None or pd.isna(valor):
+        return ""
+    return "pos" if valor >= 0 else "neg"
+
+
+def armar_resumen_rendimiento(datos: dict) -> pd.DataFrame:
+    """Arma la tabla resumen (Indicador/Valor) de una ficha de rendimiento para `exportar_ficha_html`.
+
+    Parte del mismo diccionario que ya arma y muestra `crear_ficha_rendimiento`
+    (`_calcular_rendimiento`, devuelto también por `mostrar_ficha_rendimiento`): no
+    repite ningún cálculo, solo formatea los mismos números con las reglas
+    financieras del HTML exportado (moneda/porcentaje con signo, "—" para datos
+    faltantes) en vez de la tarjeta con barra de la ficha de pantalla.
+    """
+    filas = [
+        ("Periodo (cierres)", f"{datos['fecha_inicial']} a {datos['fecha_final']}", ""),
+        ("Precio inicial", _fmt_moneda(datos["precio_inicial"]), ""),
+        ("Precio final", _fmt_moneda(datos["precio_final"]), ""),
+        ("Variación de precio", _fmt_pct(datos["rendimiento_capital"]), _clase_signo(datos["rendimiento_capital"])),
+        ("Rendimiento por dividendos", _fmt_pct(datos["rendimiento_dividendos"]), ""),
+        ("Rendimiento total", _fmt_pct(datos["rendimiento_total"]), _clase_signo(datos["rendimiento_total"])),
+        ("Ganancia total", _fmt_moneda(datos["ganancia_total"], signo=True), _clase_signo(datos["ganancia_total"])),
+        ("Dividendos recibidos", _fmt_moneda(datos["total_dividendos"], decimales=4), ""),
+        ("Variación de capital", _fmt_moneda(datos["variacion_capital"], signo=True), _clase_signo(datos["variacion_capital"])),
+    ]
+    if datos["usar_ventana_movil"]:
+        filas.append(("Riesgo mensual promedio", _fmt_pct(datos["riesgo"]["volatilidad_mensual_pct"]), ""))
+    return pd.DataFrame(filas, columns=["Indicador", "Valor", "_clase"])
+
+
+def armar_resumen_ficha_completa(datos: dict, capital_invertido: float) -> pd.DataFrame:
+    """Arma la tabla resumen (Indicador/Valor) de una ficha completa para cliente, para `exportar_ficha_html`.
+
+    Parte del mismo diccionario que ya arma y muestra `crear_ficha_completa_cliente`
+    (`_calcular_ficha_completa`, devuelto también por `mostrar_ficha_completa_cliente`):
+    no repite ningún cálculo, solo formatea los mismos números con las reglas
+    financieras del HTML exportado.
+    """
+    filas = [
+        ("Precio de compra", _fmt_moneda(datos["precio_compra"]), ""),
+        ("Precio actual", _fmt_moneda(datos["precio_actual"]), ""),
+        ("Capital de referencia", _fmt_moneda(capital_invertido, decimales=0), ""),
+        ("Títulos", f"{datos['titulos']:,}", ""),
+        ("Plusvalía", _fmt_moneda(datos["plusvalia"], signo=True), _clase_signo(datos["plusvalia"])),
+        ("Dividendo por título", _fmt_moneda(datos["dividendo_por_titulo"], decimales=4), ""),
+        ("Distribuciones totales", _fmt_moneda(datos["distribuciones_totales"]), ""),
+        ("Retorno total", _fmt_moneda(datos["retorno_total"], signo=True), _clase_signo(datos["retorno_total"])),
+        ("Rendimiento total", _fmt_pct(datos["rendimiento_total_pct"]), _clase_signo(datos["rendimiento_total_pct"])),
+    ]
+    if datos["usar_ventana_movil"]:
+        filas.append(("Volatilidad mensual promedio", _fmt_pct(datos["riesgo"]["volatilidad_mensual_pct"]), ""))
+        filas.append(("Volatilidad anualizada", _fmt_pct(datos["riesgo"]["volatilidad_anualizada_pct"]), ""))
+    return pd.DataFrame(filas, columns=["Indicador", "Valor", "_clase"])
+
+
+def armar_detalle_pagos_ficha(pagos: pd.DataFrame) -> pd.DataFrame:
+    """Arma la tabla de detalle de pagos (Fecha/Monto/Rendimiento) para `exportar_ficha_html`.
+
+    Sirve tanto para `datos["pagos"]` (ficha de rendimiento) como para
+    `datos["detalle_pagos"]` (ficha completa cliente): ambos traen las columnas
+    `ex_date`/`amount_mxn`/`yield_pct`. No repite el cálculo, solo formatea.
+    """
+    detalle = pagos.sort_values("ex_date")
+    filas = [
+        {
+            "Fecha": pd.Timestamp(fila.ex_date).strftime("%d/%m/%Y"),
+            "Monto por título": _fmt_moneda(fila.amount_mxn, decimales=4),
+            "Rendimiento": _fmt_pct(getattr(fila, "yield_pct", None)),
+        }
+        for fila in detalle.itertuples()
+    ]
+    if not filas:
+        return pd.DataFrame(columns=["Fecha", "Monto por título", "Rendimiento"])
+    return pd.DataFrame(filas)
+
+
+def armar_tabla_html_multiperiodo(tabla: pd.DataFrame) -> str:
+    """Arma el fragmento de tabla HTML (indicadores en filas, lapsos en columnas) de la
+    ficha multi-periodo, con las reglas financieras del HTML exportado, para `exportar_ficha_html`.
+
+    Reutiliza `tabla` tal cual la devuelve `mostrar_ficha_multiperiodo` (el mismo
+    DataFrame ya mostrado en el notebook): no recalcula ningún indicador. A
+    diferencia de `_formatear_indicador_multiperiodo` (que usa "N/D" y no fuerza
+    signo positivo, para no alterar la ficha de pantalla ya existente), aquí se
+    aplican las reglas nuevas de esta exportación: "—" para datos faltantes y
+    signo explícito en porcentajes y montos.
+    """
+    claves_coloreadas = {
+        "rendimiento_anual_pct", "rendimiento_mensual_pct", "plusvalia_mxn", "ganancia_total_mxn",
+        "pct_plusvalia", "pct_ganancia_total", "drawdown_maximo_pct", "ratio_sharpe",
+    }
+
+    def _formatear(clave: str, fila: pd.Series) -> str:
+        if clave == "periodo":
+            return f"{fila['fecha_inicio']} a {fila['fecha_fin']}"
+        valor = fila[clave]
+        if pd.isna(valor):
+            return "—"
+        if clave == "num_pagos":
+            return f"{int(valor):,}"
+        if clave.endswith("_mxn"):
+            return _fmt_moneda(valor, signo=True)
+        if clave == "ratio_sharpe":
+            return f"{'+' if valor >= 0 else ''}{valor:,.2f}"
+        return _fmt_pct(valor)
+
+    lapsos = [str(lapso) for lapso in tabla.index]
+    encabezados = "".join(f"<th>{escape(lapso)}</th>" for lapso in lapsos)
+    filas_html = []
+    for clave, etiqueta in _ETIQUETAS_INDICADORES_MULTIPERIODO:
+        celdas = []
+        for lapso, fila in tabla.iterrows():
+            texto = escape(_formatear(clave, fila))
+            if clave in claves_coloreadas and not pd.isna(fila[clave]):
+                texto = f'<span class="{_clase_signo(fila[clave])}">{texto}</span>'
+            celdas.append(f"<td>{texto}</td>")
+        filas_html.append(f'<tr><th scope="row">{escape(etiqueta)}</th>{"".join(celdas)}</tr>')
+
+    return (
+        '<div class="tabla-scroll"><table class="ficha-tabla ordenable">'
+        f"<thead><tr><th>Indicador</th>{encabezados}</tr></thead>"
+        f'<tbody>{"".join(filas_html)}</tbody></table></div>'
+    )
+
+
+def _tabla_html_generica(df: pd.DataFrame, ordenable: bool = True) -> str:
+    """Convierte un DataFrame ya formateado (valores como texto de presentación) en un
+    fragmento de tabla HTML para `exportar_ficha_html`.
+
+    La primera columna se renderiza como encabezado de fila (`<th>`, alineada a la
+    izquierda y fija al hacer scroll horizontal, vía la plantilla de
+    `_plantilla_html_ficha`); el resto se alinean a la derecha con cifras
+    tabulares. Si el DataFrame trae una columna `_clase` (convención de
+    `armar_resumen_rendimiento`/`armar_resumen_ficha_completa`: "pos"/"neg"/""),
+    se usa para resaltar en verde/rojo la última columna visible de esa fila; no se
+    incluye en los encabezados. `NaN`/`None` se muestran como "—", nunca vacíos.
+    """
+    tiene_clase = "_clase" in df.columns
+    columnas = [c for c in df.columns if c != "_clase"]
+    encabezados = "".join(f"<th>{escape(str(c))}</th>" for c in columnas)
+    filas_html = []
+    for _, fila in df.iterrows():
+        clase = str(fila["_clase"]) if tiene_clase and fila["_clase"] else ""
+        celdas = []
+        for i, columna in enumerate(columnas):
+            valor = fila[columna]
+            texto = "—" if valor is None or (isinstance(valor, float) and pd.isna(valor)) else str(valor)
+            texto_html = escape(texto)
+            if clase and i == len(columnas) - 1:
+                texto_html = f'<span class="{escape(clase)}">{texto_html}</span>'
+            if i == 0:
+                celdas.append(f'<th scope="row">{texto_html}</th>')
+            else:
+                celdas.append(f"<td>{texto_html}</td>")
+        filas_html.append(f"<tr>{''.join(celdas)}</tr>")
+    clases_tabla = "ficha-tabla" + (" ordenable" if ordenable else "")
+    return (
+        f'<div class="tabla-scroll"><table class="{clases_tabla}">'
+        f"<thead><tr>{encabezados}</tr></thead><tbody>{''.join(filas_html)}</tbody></table></div>"
+    )
+
+
+def _plantilla_html_ficha(
+    titulo: str,
+    ticker: str,
+    periodo_texto: str,
+    fecha_consulta: datetime,
+    cuerpo_html: str,
+    nota_metodologica: str,
+    fuente: str,
+) -> str:
+    """Plantilla compartida de las fichas exportadas a HTML (ver `exportar_ficha_html`).
+
+    Centraliza en un solo lugar el CSS/JS de las cuatro fichas exportadas de
+    `analysis-one-FIBRA` para que compartan el mismo aspecto y cualquier ajuste
+    visual se haga aquí, no en cada celda. Autocontenida (sin CDN ni archivos
+    externos): CSS en `<style>` y JS en `<script>`, ambos inline. El ordenamiento
+    de columnas es progressive enhancement — la tabla ya viene completa en el
+    HTML; el script solo reordena filas ya presentes — así que la ficha sigue
+    siendo legible con JavaScript deshabilitado. Incluye reglas `@media print`
+    (para guardarla como PDF de forma limpia) y `@media (prefers-color-scheme:
+    dark)` (para que se lea igual con el sistema en modo oscuro).
+    """
+    return f"""<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{escape(titulo)} · {escape(ticker)}</title>
+<style>
+:root{{color-scheme:light dark}}
+*{{box-sizing:border-box}}
+body{{margin:0;padding:24px 16px;background:#f4f6f5;color:#1c2a25;font-family:Georgia,'Segoe UI',Arial,sans-serif;font-size:15px;line-height:1.5}}
+main{{max-width:1150px;margin:0 auto;background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 6px 18px rgba(0,0,0,.12)}}
+header{{background:#2f5d50;color:#fff;padding:20px 24px}}
+header h1{{margin:0 0 4px;font-size:1.5rem}}
+header .meta{{font-size:.85rem;color:#cfe3da}}
+.section{{padding:20px 24px}}
+h2{{font-size:.85rem;text-transform:uppercase;letter-spacing:.4px;color:#3a6b5e;border-bottom:1px solid #e3ece8;padding-bottom:6px;margin:20px 0 12px}}
+h2:first-child{{margin-top:0}}
+.tabla-scroll{{overflow-x:auto;border:1px solid #e3ece8;border-radius:6px;margin-bottom:8px}}
+table.ficha-tabla{{border-collapse:collapse;width:100%;min-width:420px;font-size:.9rem}}
+table.ficha-tabla th,table.ficha-tabla td{{padding:9px 12px;border-bottom:1px solid #eef2f0;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}}
+table.ficha-tabla thead th{{position:sticky;top:0;background:#f7faf8;color:#55675f;font-size:.75rem;text-transform:uppercase;letter-spacing:.3px;text-align:right}}
+table.ficha-tabla thead th:first-child{{text-align:left;position:sticky;left:0;z-index:2;font-variant-numeric:normal}}
+table.ficha-tabla tbody th{{text-align:left;position:sticky;left:0;background:#f7faf8;font-weight:600;color:#1c2a25;font-variant-numeric:normal}}
+table.ficha-tabla tbody tr:nth-child(even) td,table.ficha-tabla tbody tr:nth-child(even) th{{background:#fafcfb}}
+table.ficha-tabla.ordenable thead th{{cursor:pointer}}
+.pos{{color:#2f8f6f;font-weight:600}}
+.neg{{color:#c0503c;font-weight:600}}
+.nota{{font-size:.8rem;color:#55675f;margin-top:8px}}
+footer{{padding:16px 24px;background:#f7faf8;border-top:1px solid #e3ece8;font-size:.75rem;color:#55675f;line-height:1.5}}
+footer .disclaimer{{margin-top:6px;font-style:italic}}
+@media(max-width:650px){{body{{padding:12px 8px}}header{{padding:16px}}.section{{padding:16px}}}}
+@media print{{
+  body{{background:#fff;padding:0}}
+  main{{box-shadow:none;border-radius:0;max-width:none}}
+  table.ficha-tabla.ordenable thead th{{cursor:default}}
+  .tabla-scroll{{overflow-x:visible;border:none}}
+  table.ficha-tabla tr{{page-break-inside:avoid}}
+}}
+@media (prefers-color-scheme: dark){{
+  body{{background:#12201e;color:#e8ede9}}
+  main{{background:#1b2926;box-shadow:0 6px 18px rgba(0,0,0,.5)}}
+  header{{background:#1e352e}}
+  h2{{color:#8ba39c;border-bottom-color:#30423e}}
+  table.ficha-tabla th,table.ficha-tabla td{{border-bottom-color:#30423e}}
+  table.ficha-tabla thead th,table.ficha-tabla tbody th{{background:#1e352e;color:#e8ede9}}
+  table.ficha-tabla tbody tr:nth-child(even) td,table.ficha-tabla tbody tr:nth-child(even) th{{background:#20302c}}
+  .tabla-scroll{{border-color:#30423e}}
+  .pos{{color:#5fd9b0}}
+  .neg{{color:#f2836a}}
+  footer{{background:#1e352e;border-top-color:#30423e;color:#9db3ac}}
+  .nota{{color:#9db3ac}}
+}}
+</style></head>
+<body><main>
+<header>
+<h1>{escape(titulo)}</h1>
+<div class="meta">Ticker: <strong>{escape(ticker)}</strong> · Periodo: {escape(periodo_texto)} · Consulta de datos: {fecha_consulta:%d/%m/%Y %H:%M}</div>
+</header>
+<div class="section">
+{cuerpo_html}
+</div>
+<footer>
+Fuente de los datos: {escape(fuente)}.
+<div class="nota">{escape(nota_metodologica)}</div>
+<div class="disclaimer">Esta ficha es de carácter informativo y no constituye una recomendación de inversión.</div>
+</footer>
+</main>
+<script>
+(function () {{
+  function valorOrdenable(texto) {{
+    var limpio = texto.replace(/[^0-9.,+-]/g, "").replace(/,/g, "");
+    var numero = parseFloat(limpio);
+    return isNaN(numero) ? texto.toLowerCase() : numero;
+  }}
+  document.querySelectorAll("table.ordenable").forEach(function (tabla) {{
+    var thead = tabla.tHead;
+    if (!thead) return;
+    Array.prototype.forEach.call(thead.rows[0].cells, function (encabezado, indice) {{
+      encabezado.addEventListener("click", function () {{
+        var tbody = tabla.tBodies[0];
+        var filas = Array.prototype.slice.call(tbody.rows);
+        var ascendente = encabezado.getAttribute("data-orden") !== "asc";
+        filas.sort(function (a, b) {{
+          var va = valorOrdenable(a.cells[indice].textContent);
+          var vb = valorOrdenable(b.cells[indice].textContent);
+          if (va < vb) return ascendente ? -1 : 1;
+          if (va > vb) return ascendente ? 1 : -1;
+          return 0;
+        }});
+        Array.prototype.forEach.call(thead.rows[0].cells, function (otro) {{ otro.removeAttribute("data-orden"); }});
+        encabezado.setAttribute("data-orden", ascendente ? "asc" : "desc");
+        filas.forEach(function (fila) {{ tbody.appendChild(fila); }});
+      }});
+    }});
+  }});
+}})();
+</script>
+</body></html>"""
+
+
+def exportar_ficha_html(
+    contenido,
+    titulo: str,
+    descripcion: str,
+    ticker: str,
+    periodo: str,
+    fecha_consulta: datetime,
+    carpeta_salida: Path,
+    periodo_texto: Optional[str] = None,
+    nota_metodologica: str = "",
+    fuente: str = "AMEFIBRA / Yahoo Finance (yfinance)",
+) -> Path:
+    """Exporta `contenido` a un archivo HTML autocontenido y responsivo, apto para
+    entrega a cliente (celdas 19, 23, 25 y 27 de `analysis-one-FIBRA`).
+
+    `contenido` puede ser un DataFrame, una lista de DataFrames, una lista de
+    `(titulo_seccion, DataFrame)`, o HTML ya construido (str) para casos que no
+    encajan en una tabla genérica (ver `armar_tabla_html_multiperiodo`). En
+    cualquier caso debe construirse a partir del mismo objeto ya calculado que se
+    muestra en la celda (p. ej. el `datos` que devuelve `mostrar_ficha_rendimiento`
+    vía `armar_resumen_rendimiento`), nunca de una reconstrucción paralela.
+
+    `fecha_consulta` es obligatorio: es la fecha/hora en que se consultaron los
+    datos (típicamente `extraer_fecha_consulta(ruta_ficha)`), no el momento de esta
+    exportación; se usa tanto en el encabezado como en el nombre de archivo, para
+    quedar alineada con `exportar_ficha_a_pdf` de la misma ficha. Si `contenido`
+    viene vacío/`None` o falta `fecha_consulta`, se lanza `ValueError` en vez de
+    generar un HTML en blanco o con fecha incorrecta.
+
+    El nombre de archivo sigue el mismo esquema que el PDF, solo cambiando la
+    extensión: `AAAA-MM-DD_HHMM_TICKER_descripcion-breve_periodo.html` (máximo
+    cuatro palabras en `descripcion`); ante un nombre duplicado, se sobrescribe,
+    igual que en `exportar_ficha_a_pdf`. Devuelve la ruta absoluta del archivo.
+    """
+    if isinstance(contenido, pd.DataFrame):
+        vacio = contenido.empty
+    elif isinstance(contenido, list):
+        vacio = len(contenido) == 0
+    elif isinstance(contenido, str):
+        vacio = not contenido.strip()
+    elif contenido is None:
+        vacio = True
+    else:
+        raise TypeError(f"Tipo de `contenido` no soportado: {type(contenido)!r}.")
+    if vacio:
+        raise ValueError("`contenido` no puede estar vacío: no se genera un HTML en blanco.")
+    if fecha_consulta is None:
+        raise ValueError("`fecha_consulta` es obligatorio (fecha/hora de la consulta de datos, no la de esta exportación).")
+
+    if isinstance(contenido, str):
+        cuerpo_html = contenido
+    elif isinstance(contenido, pd.DataFrame):
+        cuerpo_html = _tabla_html_generica(contenido)
+    else:
+        partes = []
+        for elemento in contenido:
+            if isinstance(elemento, tuple):
+                titulo_seccion, df = elemento
+                partes.append(f"<h2>{escape(titulo_seccion)}</h2>{_tabla_html_generica(df)}")
+            else:
+                partes.append(_tabla_html_generica(elemento))
+        cuerpo_html = "".join(partes)
+
+    html = _plantilla_html_ficha(
+        titulo, ticker, periodo_texto or str(periodo), fecha_consulta, cuerpo_html, nota_metodologica, fuente
+    )
+
+    palabras = str(descripcion).strip().lower().split()
+    if not palabras:
+        raise ValueError("La descripción breve no puede estar vacía.")
+    if len(palabras) > 4:
+        raise ValueError("La descripción breve debe tener máximo cuatro palabras.")
+    descripcion_normalizada = "-".join(palabras)
+    ticker_base = _normalizar_ticker(ticker)
+
+    carpeta_salida.mkdir(parents=True, exist_ok=True)
+    ruta = carpeta_salida / f"{fecha_consulta:%Y-%m-%d_%H%M}_{ticker_base}_{descripcion_normalizada}_{periodo}.html"
+    ruta.write_text(html, encoding="utf-8")
+    return ruta
 
 
 def exportar_ficha_a_pdf(
