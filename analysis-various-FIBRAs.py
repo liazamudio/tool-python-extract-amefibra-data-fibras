@@ -85,17 +85,6 @@ if EXPORTAR_XLSX:
     print(f"Excel guardado en: {ruta_xlsx}")
 
 # %% [markdown]
-# ## Consulta de emisoras
-
-# %%
-try:
-    df
-except NameError:
-    df = None
-
-df_emisoras = mostrar_emisoras(df, CARPETA_SALIDA)
-
-# %% [markdown]
 # ## Historial de distribuciones por FIBRA
 #
 # ### Fuentes evaluadas
@@ -111,11 +100,18 @@ df_emisoras = mostrar_emisoras(df, CARPETA_SALIDA)
 # Se usa `yfinance` como respaldo reproducible porque las fuentes primarias no ofrecen una API homogénea. El resultado contiene la fecha ex-dividendo y el importe disponible en Yahoo; la fecha de registro, fecha de pago y componentes fiscales no se incluyen porque esta fuente no los entrega de forma confiable. El histórico se ordena del más antiguo al más reciente. `yield_pct` es el rendimiento de cada distribución respecto al cierre de su fecha ex-dividendo; `annualized_yield_pct` anualiza ese rendimiento usando `365 / días_del_periodo`. Para la primera fila se usa la mediana histórica de días entre distribuciones.
 
 # %% [markdown]
-# ### Tickers a consultar
+# ### CONSULTA DE EMISORAS
 #
 # Marca una o más FIBRAs en la lista de casillas (mismo listado de la sección "Consulta de emisoras"): un clic por cada ticker que quieras incluir. Al correr esta celda se despliega la lista; ajusta las casillas y luego corre la celda de abajo para consultar los tickers elegidos.
 
 # %%
+try:
+    df
+except NameError:
+    df = None
+
+df_emisoras = mostrar_emisoras(df, CARPETA_SALIDA)
+
 selector_tickers = seleccionar_tickers_interactivo(df_emisoras["Emisora"])
 
 # %%
@@ -143,12 +139,12 @@ resumen_tickers = resumen_precio_periodicidad(tickers_seleccionados, historiales
 # Elige, del desplegable, el año a consultar. Solo se muestran los años con distribuciones disponibles para **todos** los tickers seleccionados (intersección); el año elegido se usa para el comparativo de todas las FIBRAs seleccionadas.
 
 # %%
+# Calculamos la ventana móvil de 12 meses para cada historial de dividendos, y la agregamos.
 AÑOS_DISPONIBLES = obtener_anios_disponibles_comunes(historiales)
 selector_anio = seleccionar_anio_interactivo(AÑOS_DISPONIBLES)
 
 # %%
-# Generamos y exportamos (HTML responsivo) el comparativo de rendimiento anual de
-# todas las FIBRAs seleccionadas, para el año elegido arriba.
+# Generamos y exportamos (HTML responsivo) el comparativo de rendimiento anual de todas las FIBRAs seleccionadas, para el año elegido arriba.
 AÑO_SELECCIONADO = selector_anio.value
 ruta_comparativo_rendimiento_anual = mostrar_comparativo_rendimiento(
     tickers_seleccionados, historiales, CARPETA_SALIDA, CARPETA_FICHAS_EXPORT, año=AÑO_SELECCIONADO
@@ -204,6 +200,6 @@ ruta_comparativo_completo_12m = mostrar_comparativo_completo_cliente(
 )
 
 # %% [markdown]
-# ## ANÁLISIS DE TRES AÑOS
+# ## ANÁLISIS A MAS AÑOS
 
 # %%
