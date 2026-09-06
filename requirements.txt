@@ -1,7 +1,22 @@
+# Extracción del Índice FIBRAS (navegador headless) y parseo de la tabla renderizada
 playwright>=1.62.0
+lxml>=6.1.2
+
+# Datos de mercado y distribuciones de cada FIBRA
+yfinance>=0.2.66
+
+# Procesamiento y exportación de datos
 pandas>=3.0.5
 openpyxl>=3.1.5
-lxml>=6.1.2
-yfinance>=0.2.66
-ipywidgets>=8.1.9
+
+# Tasa libre de riesgo (CETES 28 días, API SIE de Banxico) para el ratio tipo Sharpe
 requests>=2.31.0
+
+# Ejecución de los notebooks: kernel del venv, widgets interactivos y utilidades de display
+ipykernel>=6.29.0
+ipywidgets>=8.1.9
+ipython>=8.18.0
+
+# Mantiene sincronizado cada `.py` "percent" con su `.ipynb`
+# (python -m jupytext --to py:percent <notebook>.ipynb)
+jupytext>=1.16.0
