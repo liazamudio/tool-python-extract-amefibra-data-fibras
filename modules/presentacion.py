@@ -2224,44 +2224,52 @@ def mostrar_escenario_multianual(
         t: widgets.Checkbox(value=(t in seleccion_inicial), description=t, indent=False)
         for t in contexto["tickers"]
     }
-    salida = widgets.Output()
+    # La tabla y el estado se pintan en dos widgets HTML que se actualizan EN SITIO
+    # (reasignando `.value`): así la ficha se muestra una sola vez y se reemplaza al
+    # cambiar el horizonte o las FIBRAs, sin apilar copias como pasaría con un
+    # `Output` y `display()` en cada callback.
+    panel_tabla = widgets.HTML()
+    panel_estado = widgets.HTML()
 
-    def _render(*_):
+    def _actualizar(*_):
         años = selector_horizonte.value
-        elegibles, _, _ = _elegibilidad_escenario_multianual(contexto, años)
+        elegibles, _excluidas, _fi = _elegibilidad_escenario_multianual(contexto, años)
         for t, casilla in casillas.items():
-            casilla.unobserve(_render, "value")
+            casilla.unobserve(_actualizar, "value")
             if t not in elegibles:
                 casilla.value = False
-                casilla.disabled = True
-            else:
-                casilla.disabled = False
-            casilla.observe(_render, "value")
+            casilla.disabled = t not in elegibles
+            casilla.observe(_actualizar, "value")
         marcados = [t for t, casilla in casillas.items() if casilla.value]
-        with salida:
-            salida.clear_output(wait=True)
-            ruta, notas = crear_escenario_multianual(
-                contexto, años, marcados, carpeta_salida, capital_invertido, marca
+        ruta, notas = crear_escenario_multianual(
+            contexto, años, marcados, carpeta_salida, capital_invertido, marca
+        )
+        if ruta is not None:
+            panel_tabla.value = ruta.read_text(encoding="utf-8")
+            ruta_export = exportar_comparativo_a_html(ruta, "escenario multianual", f"{años}a", carpeta_export)
+            panel_estado.value = (
+                f'<p style="font:12px sans-serif;color:#55675f;margin:6px 0">HTML exportado: '
+                f"{escape(str(ruta_export))}</p>"
             )
-            if ruta is not None:
-                display(HTML(ruta.read_text(encoding="utf-8")))
-                ruta_export = exportar_comparativo_a_html(ruta, "escenario multianual", f"{años}a", carpeta_export)
-                print(f"HTML exportado: {ruta_export}")
-            for nota in notas:
-                print(nota)
+        else:
+            panel_tabla.value = ""
+            panel_estado.value = '<ul style="font:12px sans-serif;color:#a33;margin:6px 0">' + "".join(
+                f"<li>{escape(nota)}</li>" for nota in notas
+            ) + "</ul>"
 
-    selector_horizonte.observe(_render, "value")
+    selector_horizonte.observe(_actualizar, "value")
     for casilla in casillas.values():
-        casilla.observe(_render, "value")
+        casilla.observe(_actualizar, "value")
     display(
         widgets.VBox(
             [
                 selector_horizonte,
                 widgets.HTML("<b>FIBRAs a incluir</b> (solo se pueden marcar las elegibles para el horizonte):"),
                 *casillas.values(),
+                panel_estado,
+                panel_tabla,
             ]
         )
     )
-    display(salida)
-    _render()
+    _actualizar()
     return selector_horizonte
