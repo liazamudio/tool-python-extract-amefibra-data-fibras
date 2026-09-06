@@ -106,6 +106,7 @@ if EXPORTAR_XLSX:
 # Marca una o más FIBRAs en la lista de casillas (mismo listado de la sección "Consulta de emisoras"): un clic por cada ticker que quieras incluir. Al correr esta celda se despliega la lista; ajusta las casillas y luego corre la celda de abajo para consultar los tickers elegidos.
 
 # %%
+# Si df no está definido, inicializarlo como None
 try:
     df
 except NameError:
@@ -144,13 +145,6 @@ resumen_tickers = resumen_precio_periodicidad(tickers_seleccionados, historiales
 AÑOS_DISPONIBLES = obtener_anios_disponibles_comunes(historiales)
 selector_anio = seleccionar_anio_interactivo(AÑOS_DISPONIBLES)
 
-# %%
-# Generamos y exportamos (HTML responsivo) el comparativo de rendimiento anual de todas las FIBRAs seleccionadas, para el año elegido arriba.
-AÑO_SELECCIONADO = selector_anio.value
-ruta_comparativo_rendimiento_anual = mostrar_comparativo_rendimiento(
-    tickers_seleccionados, historiales, CARPETA_SALIDA, CARPETA_FICHAS_EXPORT, año=AÑO_SELECCIONADO
-)
-
 # %% [markdown]
 # ### Comparativo de FIBRAs del año seleccionado (ficha completa para cliente)
 #
@@ -158,7 +152,8 @@ ruta_comparativo_rendimiento_anual = mostrar_comparativo_rendimiento(
 
 # %%
 # Generamos y exportamos (HTML responsivo) el "Comparativo de FIBRAs" (ficha completa
-# anual para el cliente) de todas las FIBRAs seleccionadas, con el mismo año.
+# anual para el cliente) de todas las FIBRAs seleccionadas, con el año elegido arriba.
+AÑO_SELECCIONADO = selector_anio.value
 ruta_comparativo_completo_anual = mostrar_comparativo_completo_cliente(
     tickers_seleccionados, historiales, CARPETA_SALIDA, CARPETA_FICHAS_EXPORT, año=AÑO_SELECCIONADO
 )
@@ -177,16 +172,6 @@ ruta_comparativo_completo_anual = mostrar_comparativo_completo_cliente(
 FECHA_REFERENCIA_12M = None
 FECHA_INICIO_12M, FECHA_FIN_12M = calcular_ventana_movil_12_meses(FECHA_REFERENCIA_12M)
 print(f"Ventana de análisis (única para todos los tickers seleccionados): {FECHA_INICIO_12M:%Y-%m-%d} a {FECHA_FIN_12M:%Y-%m-%d}")
-
-# %% [markdown]
-# ### Comparativo de rendimiento de los últimos 12 meses
-
-# %%
-# Generamos y exportamos (HTML responsivo) el comparativo de rendimiento de los
-# últimos 12 meses de todas las FIBRAs seleccionadas, con la ventana definida arriba.
-ruta_comparativo_rendimiento_12m = mostrar_comparativo_rendimiento(
-    tickers_seleccionados, historiales, CARPETA_SALIDA, CARPETA_FICHAS_EXPORT, fecha_referencia=FECHA_REFERENCIA_12M
-)
 
 # %% [markdown]
 # ### Comparativo de FIBRAs de los últimos 12 meses (ficha completa para cliente)
