@@ -24,10 +24,13 @@ from .extraccion import (
     obtener_tabla_fibras_en_notebook,
 )
 from .procesamiento import (
+    HORIZONTES_ESCENARIO_MULTIANUAL,
     _normalizar_ticker,
     armar_tabla_multiperiodo,
+    calcular_escenario_multianual,
     calcular_riesgo_mensual,
     calcular_ventana_movil_12_meses,
+    calcular_ventana_multianual,
     normalizar_para_analisis,
 )
 
@@ -146,17 +149,21 @@ def _buscar_csv_emisoras_mas_reciente(carpeta_salida: Path) -> Optional[Path]:
 
 
 def mostrar_emisoras(df: Optional[pd.DataFrame], carpeta_salida: Path) -> pd.DataFrame:
-    """Obtiene el listado de emisoras, lo muestra en pantalla y lo exporta a CSV en `carpeta_salida`.
+    """Obtiene el listado de emisoras, indica su procedencia y lo exporta a CSV en `carpeta_salida`.
 
     Si `df` fue generado en la corrida actual (no es `None` ni está vacío), se usa
     ese dato recién extraído de AMEFIBRA. Si no (porque las celdas de extracción no
     se ejecutaron), se reutiliza el CSV `*_list_of_tickers.csv` más reciente ya
     guardado en `carpeta_salida`, para no depender de repetir la extracción.
+
+    No imprime el listado completo de emisoras: esa información ya queda visible en
+    el selector de casillas que se despliega en la misma celda
+    (`seleccionar_tickers_interactivo`). Sí deja la leyenda de la fuente y el
+    conteo de emisoras cargadas, como trazabilidad.
     """
     if df is not None and not df.empty:
-        print("Fuente de emisoras: extracción de AMEFIBRA de esta corrida.")
         df_emisoras = df[["Emisora"]]
-        print(df_emisoras)
+        print(f"Fuente de emisoras: extracción de AMEFIBRA de esta corrida ({len(df_emisoras)} emisoras).")
         ruta = exportar_csv_emisoras(df_emisoras, carpeta_salida)
         print(f"CSV de emisoras guardado en: {ruta}")
         return df_emisoras
@@ -168,9 +175,11 @@ def mostrar_emisoras(df: Optional[pd.DataFrame], carpeta_salida: Path) -> pd.Dat
             f"extracción de AMEFIBRA?) ni un CSV 'list_of_tickers' en {carpeta_salida}. "
             "Corre la extracción de AMEFIBRA o coloca ahí un CSV histórico de emisoras."
         )
-    print(f"Fuente de emisoras: histórico de {ruta_historico.name} (no se ejecutó la extracción de AMEFIBRA en esta corrida).")
     df_emisoras = pd.read_csv(ruta_historico)[["Emisora"]]
-    print(df_emisoras)
+    print(
+        f"Fuente de emisoras: histórico de {ruta_historico.name} ({len(df_emisoras)} emisoras; "
+        "no se ejecutó la extracción de AMEFIBRA en esta corrida)."
+    )
     return df_emisoras
 
 
@@ -1894,3 +1903,365 @@ def mostrar_comparativo_completo_cliente(
     ruta_export = exportar_comparativo_a_html(ruta, descripcion_export, periodo_export, carpeta_export)
     print(f"HTML exportado: {ruta_export}")
     return ruta
+
+
+# --- Escenario de inversión multianual (2/3/5/10 años) ---
+
+# Filas del "Resumen del escenario de inversión" multianual. Réplica del resumen de
+# la ficha completa de los últimos 12 meses (`armar_resumen_ficha_completa`, modo
+# ventana móvil) con tres filas nuevas insertadas: "Distribución promedio anual"
+# antes de "Distribuciones totales", y "Rendimiento promedio anual — CAGR / simple"
+# antes de "Rendimiento total (%)". `(clave, etiqueta, formato, colorear_por_signo)`.
+_FILAS_RESUMEN_ESCENARIO_MULTIANUAL = [
+    ("precio_compra", "Precio inicial", "moneda", False),
+    ("precio_actual", "Precio final", "moneda", False),
+    ("capital_invertido", "Capital de referencia", "moneda0", False),
+    ("titulos", "Títulos adquiridos", "entero", False),
+    ("valor_final_posicion", "Valor final de la posición", "moneda", False),
+    ("plusvalia", "Plusvalía / minusvalía de capital", "moneda_signo", True),
+    ("plusvalia_pct", "Plusvalía / minusvalía de capital (%)", "pct", True),
+    ("dividendo_por_titulo", "Distribución por título", "moneda4", False),
+    ("distribucion_promedio_anual", "Distribución promedio anual", "moneda", False),
+    ("distribuciones_totales", "Distribuciones totales", "moneda", False),
+    ("retorno_total", "Ganancia total", "moneda_signo", True),
+    ("cagr_pct", "Rendimiento promedio anual — CAGR (%)", "pct_na", True),
+    ("rendimiento_anual_simple_pct", "Rendimiento promedio anual — simple (%)", "pct", True),
+    ("rendimiento_total_pct", "Rendimiento total (%)", "pct", True),
+    ("volatilidad_mensual_pct", "Volatilidad mensual promedio (%)", "pct", False),
+    ("volatilidad_anualizada_pct", "Volatilidad anualizada (%)", "pct", False),
+]
+
+_NOTAS_METODOLOGICAS_ESCENARIO_MULTIANUAL = [
+    "La ventana es móvil hacia atrás desde la última fecha con precio disponible común "
+    "a las FIBRAs analizadas (no años calendario): para N años, [fecha final − N×12 meses, fecha final].",
+    "Precio inicial (P0): primer cierre disponible en la fecha de inicio de la ventana o posterior; "
+    "mismo criterio para todas las FIBRAs.",
+    "Distribuciones totales: suma del efectivo recibido (amount_mxn) de todos los pagos con ex_date dentro "
+    "de la ventana, sin importar su tratamiento fiscal. Los yield_pct individuales de cada pago no se suman: "
+    "todo rendimiento parte de montos en MXN sobre P0.",
+    "El escenario asume que las distribuciones se reciben en efectivo y no se reinvierten "
+    "(misma convención que la ficha de los últimos 12 meses).",
+    "CAGR = ((1 + rendimiento_total/100)^(1/N) − 1) × 100: tasa compuesta anual equivalente, comparable "
+    "contra CETES o inflación. Rendimiento promedio anual simple = rendimiento_total / N; la brecha entre "
+    'ambos refleja el efecto de la capitalización. Si 1 + rendimiento_total/100 ≤ 0, el CAGR se muestra como "n/a".',
+    "Información histórica e informativa. No constituye una recomendación de inversión; "
+    "los rendimientos pasados no garantizan rendimientos futuros.",
+]
+
+
+def armar_resumen_escenario_multianual(datos: dict) -> pd.DataFrame:
+    """Tabla resumen (Indicador/Valor/`_clase`) del escenario multianual de un ticker.
+
+    Parte del diccionario de `procesamiento.calcular_escenario_multianual` (no
+    repite ningún cálculo) y formatea los números con las mismas reglas financieras
+    del resto de las fichas exportadas (moneda/porcentaje con signo, "—" para datos
+    faltantes, "n/a" para el CAGR cuando la pérdida total es ≥ 100%). El formato es
+    el mismo de `armar_resumen_ficha_completa` para que `_tabla_html_comparativa`
+    arme una tabla idéntica en estilo a la de la celda de los últimos 12 meses.
+    """
+    filas = []
+    for clave, etiqueta, formato, colorear in _FILAS_RESUMEN_ESCENARIO_MULTIANUAL:
+        valor = datos[clave]
+        if formato == "moneda":
+            texto = _fmt_moneda(valor)
+        elif formato == "moneda0":
+            texto = _fmt_moneda(valor, decimales=0)
+        elif formato == "moneda4":
+            texto = _fmt_moneda(valor, decimales=4)
+        elif formato == "moneda_signo":
+            texto = _fmt_moneda(valor, signo=True)
+        elif formato == "entero":
+            texto = f"{int(valor):,}"
+        elif formato == "pct_na":
+            texto = "n/a" if (valor is None or pd.isna(valor)) else _fmt_pct(valor)
+        else:  # "pct"
+            texto = _fmt_pct(valor)
+        filas.append((etiqueta, texto, _clase_signo(valor) if colorear else ""))
+    return pd.DataFrame(filas, columns=["Indicador", "Valor", "_clase"])
+
+
+def _preparar_escenario_multianual(tickers_seleccionados: pd.DataFrame, historiales: dict) -> dict:
+    """Descarga una sola vez el historial de precios completo de cada FIBRA seleccionada
+    con historial de dividendos y fija la "fecha final" común al universo analizado.
+
+    Devuelve un contexto reutilizable por cualquier horizonte: al cambiar de
+    horizonte (2/3/5/10 años) no se vuelve a descargar nada, solo se recorta la
+    ventana. `fecha_final` es la última fecha de precio disponible en TODAS las
+    FIBRAs (mínimo de las últimas fechas de cada una), para que la ventana sea
+    común y reproducible.
+    """
+    precios_por_ticker: dict[str, pd.Series] = {}
+    pagos_por_ticker: dict[str, pd.DataFrame] = {}
+    primer_precio: dict[str, pd.Timestamp] = {}
+    ultima_fecha: dict[str, pd.Timestamp] = {}
+    for ticker in tickers_seleccionados["ticker"]:
+        historial = historiales.get(ticker)
+        if historial is None or historial.empty:
+            print(f"Aviso: se omite {ticker} del escenario multianual: sin historial de dividendos disponible.")
+            continue
+        ticker_base = _normalizar_ticker(ticker)
+        try:
+            serie = _descargar_historico_completo(f"{ticker_base}.MX").sort_index()
+        except Exception as error:  # noqa: BLE001 - tolerancia a fallos por ticker, a propósito
+            print(f"Aviso: no se pudo descargar el historial de precios de {ticker}: {error}")
+            continue
+        if serie.empty:
+            continue
+        pagos = historial.copy()
+        pagos["ex_date"] = pd.to_datetime(pagos["ex_date"], errors="coerce")
+        pagos["amount_mxn"] = pd.to_numeric(pagos["amount_mxn"], errors="coerce")
+        pagos = pagos[pagos["ticker"].astype(str).str.upper() == ticker_base]
+        precios_por_ticker[ticker_base] = serie
+        pagos_por_ticker[ticker_base] = pagos
+        primer_precio[ticker_base] = serie.index.min()
+        ultima_fecha[ticker_base] = serie.index.max()
+    if not precios_por_ticker:
+        raise ValueError(
+            "No hay FIBRAs con historial de precios y de distribuciones para armar el escenario multianual."
+        )
+    fecha_final = pd.Timestamp(min(ultima_fecha.values()))
+    return {
+        "precios_por_ticker": precios_por_ticker,
+        "pagos_por_ticker": pagos_por_ticker,
+        "primer_precio": primer_precio,
+        "fecha_final": fecha_final,
+        "tickers": list(precios_por_ticker),
+    }
+
+
+def _elegibilidad_escenario_multianual(
+    contexto: dict, años: int
+) -> tuple[list[str], list[tuple[str, pd.Timestamp]], pd.Timestamp]:
+    """Separa las FIBRAs del contexto en elegibles / excluidas para el horizonte de `años` años.
+
+    Una FIBRA es elegible solo si su primer precio disponible es anterior o igual al
+    inicio de la ventana de N años (historial de precio completo cubriendo todo el
+    horizonte). Devuelve `(elegibles, excluidas, fecha_inicio)`, con `excluidas`
+    como lista de `(ticker, primer_precio_disponible)` para la nota informativa.
+    """
+    fecha_inicio, _ = calcular_ventana_multianual(contexto["fecha_final"], años)
+    elegibles: list[str] = []
+    excluidas: list[tuple[str, pd.Timestamp]] = []
+    for ticker_base in contexto["tickers"]:
+        if contexto["primer_precio"][ticker_base] <= fecha_inicio:
+            elegibles.append(ticker_base)
+        else:
+            excluidas.append((ticker_base, contexto["primer_precio"][ticker_base]))
+    return elegibles, excluidas, fecha_inicio
+
+
+def crear_escenario_multianual(
+    contexto: dict,
+    años: int,
+    tickers_marcados,
+    carpeta_salida: Path,
+    capital_invertido: float = 10000.0,
+    marca: str = "ZAMUDIO INVESTORS",
+) -> tuple[Optional[Path], list[str]]:
+    """Calcula y exporta el "Resumen del escenario de inversión" multianual del horizonte de `años` años.
+
+    Toma el contexto de `_preparar_escenario_multianual`, filtra los tickers
+    marcados a los elegibles para el horizonte, y arma una sola tabla comparativa
+    (FIBRAs en columnas) con el mismo estilo que la ficha completa de los últimos
+    12 meses. Devuelve `(ruta_html | None, notas)`: `notas` incluye las FIBRAs
+    excluidas por historial insuficiente, la advertencia del CAGR "n/a" si aplica,
+    y el caso borde de que ninguna FIBRA elegible quede seleccionada.
+    """
+    años = int(años)
+    fecha_final = contexto["fecha_final"]
+    elegibles, excluidas, fecha_inicio = _elegibilidad_escenario_multianual(contexto, años)
+    marcados = [_normalizar_ticker(t) for t in tickers_marcados]
+    seleccion = [t for t in contexto["tickers"] if t in elegibles and t in marcados]
+
+    notas: list[str] = []
+    if excluidas:
+        detalle = ", ".join(f"{t} (inicio de cotización: {fecha:%Y-%m})" for t, fecha in excluidas)
+        notas.append(f"Excluidas por historial insuficiente para {años} años: {detalle}.")
+
+    if not elegibles:
+        notas.append(
+            f"Ninguna de las FIBRAs analizadas tiene historial de precios suficiente para un horizonte de {años} años."
+        )
+        return None, notas
+    if not seleccion:
+        notas.append(
+            f"No hay ninguna FIBRA elegible marcada para el horizonte de {años} años "
+            f"(elegibles: {', '.join(elegibles)})."
+        )
+        return None, notas
+
+    datos_por_ticker: dict[str, dict] = {}
+    for ticker_base in seleccion:
+        try:
+            datos_por_ticker[ticker_base] = calcular_escenario_multianual(
+                contexto["precios_por_ticker"][ticker_base],
+                contexto["pagos_por_ticker"][ticker_base],
+                fecha_final,
+                años,
+                capital_invertido,
+            )
+        except Exception as error:  # noqa: BLE001 - tolerancia a fallos por ticker, a propósito
+            notas.append(f"No se pudo calcular el escenario de {ticker_base} para {años} años: {error}")
+    if not datos_por_ticker:
+        return None, notas
+
+    tickers_ok = list(datos_por_ticker)
+    resumenes = {t: armar_resumen_escenario_multianual(datos_por_ticker[t]) for t in tickers_ok}
+    tabla_resumen_html = _tabla_html_comparativa(tickers_ok, resumenes)
+
+    if any(pd.isna(datos_por_ticker[t]["cagr_pct"]) for t in tickers_ok):
+        notas.append(
+            'El CAGR aparece como "n/a" en las FIBRAs cuya pérdida total del periodo es ≥ 100% '
+            "(1 + rendimiento total ≤ 0): no existe una tasa compuesta anual real en ese caso."
+        )
+
+    ventana_txt = f"{fecha_inicio:%Y-%m-%d} a {fecha_final:%Y-%m-%d}"
+    encabezado = f"Resumen del escenario de inversión — Últimos {años} años ({ventana_txt})"
+    nota_exclusion_html = f'<div class="period-note">{escape(notas[0])}</div>' if excluidas else ""
+    pie_metodologico_html = "".join(
+        f"<li>{escape(linea)}</li>" for linea in _NOTAS_METODOLOGICAS_ESCENARIO_MULTIANUAL
+    )
+
+    html = f"""<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Escenario de inversión {años} años {fecha_final:%Y%m%d}</title>
+<style>
+body{{margin:0;background:#f4f6f5;font-family:'Segoe UI',Arial,sans-serif;color:#25332e}}
+main{{max-width:1200px;margin:24px auto;background:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 6px 18px #00000022;color:#1c2a25}}
+.header{{background:#2f5d50;color:#fff;text-align:center;padding:22px 16px}}
+.header h1{{margin:0;font-size:24px;letter-spacing:1px}}
+.header .subtitle{{margin-top:4px;font-size:13px;color:#cfe3da}}
+.section{{padding:18px 22px}}
+h2.section-title{{font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:#3a6b5e;border-bottom:1px solid #e3ece8;padding-bottom:6px;margin:18px 0 12px}}
+.tabla-scroll{{overflow-x:auto;border:1px solid #e3ece8;border-radius:6px}}
+table{{border-collapse:collapse;width:100%;min-width:520px;font-size:13px}}
+th,td{{padding:9px 12px;border-bottom:1px solid #eef2f0;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}}
+th{{color:#55675f;font-size:11px;text-transform:uppercase;letter-spacing:.3px}}
+tbody th{{text-align:left;color:#1c2a25;background:#f7faf8;position:sticky;left:0;z-index:1;text-transform:none;font-weight:600;font-variant-numeric:normal}}
+thead th:first-child{{text-align:left;position:sticky;left:0;background:#ffffff;z-index:2}}
+tbody tr:nth-child(even) td{{background:#f7faf8}}
+.pos{{color:#2f8f6f;font-weight:600}}
+.neg{{color:#c0503c;font-weight:600}}
+.period-note{{font-size:11px;color:#55675f;font-style:italic;margin-top:8px}}
+.metodologia{{font-size:11px;color:#55675f;margin:12px 0 0;padding-left:18px;line-height:1.5}}
+.disclaimer{{font-size:9px;color:#5c6b65;text-align:center;padding:0 22px 12px;line-height:1.4}}
+.footer{{background:#22463c;color:#fff;text-align:center;padding:12px;font-size:12px;letter-spacing:2px}}
+@media(max-width:650px){{.section{{padding:14px}}.header h1{{font-size:20px}}}}
+</style></head>
+<body><main>
+<div class="header"><h1>Escenario de inversión multianual</h1><div class="subtitle">{escape(encabezado)} · Capital de referencia: ${capital_invertido:,.0f} · {len(tickers_ok)} FIBRAs</div></div>
+<div class="section">
+<h2 class="section-title">Resumen del escenario de inversión</h2>
+<div class="tabla-scroll"><table>{tabla_resumen_html}</table></div>
+{nota_exclusion_html}
+<h2 class="section-title">Notas metodológicas</h2>
+<ul class="metodologia">{pie_metodologico_html}</ul>
+</div>
+<div class="disclaimer">Ficha informativa basada en datos históricos.<br>No constituye recomendaciones de inversión ni ofertas de compra o venta de activos financieros.<br>Rendimientos pasados no garantizan rendimientos futuros.</div>
+<div class="footer">{escape(marca)}</div>
+</main></body></html>"""
+    carpeta_salida.mkdir(parents=True, exist_ok=True)
+    momento = datetime.now()
+    ruta = carpeta_salida / f"{momento:%Y%m%d_%H%M%S}_escenario_{años}a_{fecha_final:%Y%m%d}.html"
+    ruta.write_text(html, encoding="utf-8")
+    return ruta, notas
+
+
+def mostrar_escenario_multianual(
+    tickers_seleccionados: pd.DataFrame,
+    historiales: dict,
+    carpeta_salida: Path,
+    carpeta_export: Path,
+    capital_invertido: float = 10000.0,
+    marca: str = "ZAMUDIO INVESTORS",
+    horizonte_inicial: int = 5,
+    horizontes_simulados: Optional[list[int]] = None,
+):
+    """Escenario de inversión multianual interactivo (horizontes de 2, 3, 5 y 10 años).
+
+    Replica el "Resumen del escenario de inversión" de la ficha completa de los
+    últimos 12 meses, pero sobre ventanas móviles más largas contadas hacia atrás
+    desde la última fecha con datos común a las FIBRAs analizadas. Muestra un
+    selector de horizonte y una lista de casillas de FIBRAs: al cambiar el
+    horizonte, la tabla se recalcula al vuelo y la lista de FIBRAs elegibles se
+    actualiza (una FIBRA sin historial suficiente para el horizonte se deshabilita
+    y se deselecciona, y queda documentada en una nota). En cada render se exporta
+    el HTML a `carpeta_export`.
+
+    `horizontes_simulados` (para pruebas automatizadas, sin widgets) renderiza esos
+    horizontes de una vez con todas las FIBRAs elegibles y devuelve
+    `{años: ruta_html}`; en uso interactivo devuelve el `Dropdown` de horizonte.
+    """
+    contexto = _preparar_escenario_multianual(tickers_seleccionados, historiales)
+    print(
+        "Fecha final común al universo analizado (última fecha con precio en todas las FIBRAs): "
+        f"{contexto['fecha_final']:%Y-%m-%d}"
+    )
+    seleccion_inicial = list(contexto["tickers"])
+
+    if horizontes_simulados is not None:
+        rutas: dict[int, Path] = {}
+        for años in horizontes_simulados:
+            print(f"\n=== Horizonte de {años} años ===")
+            ruta, notas = crear_escenario_multianual(
+                contexto, años, seleccion_inicial, carpeta_salida, capital_invertido, marca
+            )
+            for nota in notas:
+                print(f"  - {nota}")
+            if ruta is not None:
+                display(HTML(ruta.read_text(encoding="utf-8")))
+                ruta_export = exportar_comparativo_a_html(ruta, "escenario multianual", f"{años}a", carpeta_export)
+                print(f"  HTML exportado: {ruta_export}")
+                rutas[años] = ruta
+        return rutas
+
+    selector_horizonte = widgets.Dropdown(
+        options=[(f"{n} años", n) for n in HORIZONTES_ESCENARIO_MULTIANUAL],
+        value=horizonte_inicial,
+        description="Horizonte:",
+    )
+    casillas = {
+        t: widgets.Checkbox(value=(t in seleccion_inicial), description=t, indent=False)
+        for t in contexto["tickers"]
+    }
+    salida = widgets.Output()
+
+    def _render(*_):
+        años = selector_horizonte.value
+        elegibles, _, _ = _elegibilidad_escenario_multianual(contexto, años)
+        for t, casilla in casillas.items():
+            casilla.unobserve(_render, "value")
+            if t not in elegibles:
+                casilla.value = False
+                casilla.disabled = True
+            else:
+                casilla.disabled = False
+            casilla.observe(_render, "value")
+        marcados = [t for t, casilla in casillas.items() if casilla.value]
+        with salida:
+            salida.clear_output(wait=True)
+            ruta, notas = crear_escenario_multianual(
+                contexto, años, marcados, carpeta_salida, capital_invertido, marca
+            )
+            if ruta is not None:
+                display(HTML(ruta.read_text(encoding="utf-8")))
+                ruta_export = exportar_comparativo_a_html(ruta, "escenario multianual", f"{años}a", carpeta_export)
+                print(f"HTML exportado: {ruta_export}")
+            for nota in notas:
+                print(nota)
+
+    selector_horizonte.observe(_render, "value")
+    for casilla in casillas.values():
+        casilla.observe(_render, "value")
+    display(
+        widgets.VBox(
+            [
+                selector_horizonte,
+                widgets.HTML("<b>FIBRAs a incluir</b> (solo se pueden marcar las elegibles para el horizonte):"),
+                *casillas.values(),
+            ]
+        )
+    )
+    display(salida)
+    _render()
+    return selector_horizonte

@@ -42,6 +42,7 @@ from modules.presentacion import (
     mostrar_comparativo_completo_cliente,
     mostrar_comparativo_rendimiento,
     mostrar_emisoras,
+    mostrar_escenario_multianual,
     resumen_precio_periodicidad,
     seleccionar_anio_interactivo,
     seleccionar_tickers_interactivo,
@@ -200,6 +201,17 @@ ruta_comparativo_completo_12m = mostrar_comparativo_completo_cliente(
 )
 
 # %% [markdown]
-# ## ANÁLISIS A MAS AÑOS
+# ## ANÁLISIS A MÁS AÑOS
+#
+# Escenario de inversión sobre ventanas móviles de **2, 3, 5 y 10 años**, contadas hacia atrás desde la última fecha con precio disponible común a las FIBRAs seleccionadas. Replica el *Resumen del escenario de inversión* de la ficha completa de los últimos 12 meses (misma metodología y formato) y agrega la distribución promedio anual, el rendimiento promedio anual compuesto (CAGR) y el simple.
+#
+# El horizonte es interactivo: al cambiarlo, la tabla se recalcula y la lista de FIBRAs elegibles se actualiza. Una FIBRA sin historial de precio suficiente para cubrir todo el horizonte se omite de ese periodo (se deshabilita y se deselecciona), con una nota que indica su inicio de cotización.
 
 # %%
+# Escenario de inversión multianual (2/3/5/10 años). Reutiliza los tickers ya
+# seleccionados y sus historiales de dividendos; descarga el historial de precios
+# completo de cada FIBRA una sola vez. Cambia el horizonte en el desplegable y
+# marca/desmarca FIBRAs: la tabla y la lista de elegibles se recalculan al vuelo.
+selector_horizonte = mostrar_escenario_multianual(
+    tickers_seleccionados, historiales, CARPETA_SALIDA, CARPETA_FICHAS_EXPORT
+)

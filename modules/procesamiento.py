@@ -394,3 +394,123 @@ def armar_tabla_multiperiodo(
 
     tabla = pd.DataFrame(filas).set_index("lapso")
     return tabla, notas
+
+
+# --- Escenario de inversión multianual (2/3/5/10 años) ---
+
+HORIZONTES_ESCENARIO_MULTIANUAL = [2, 3, 5, 10]
+
+
+def calcular_ventana_multianual(fecha_final, años: int) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Ventana móvil de `años` años hacia atrás desde `fecha_final` (ambos extremos inclusive).
+
+    `[fecha_final - N años + 1 día, fecha_final]` (N años completos, ambos extremos
+    inclusive). Es la generalización exacta de `calcular_ventana_movil_12_meses`
+    (con `años=1` produce la misma ventana que esa función usaría para esa
+    `fecha_final`), pero con `fecha_final` anclada a la última fecha con datos
+    disponibles del universo analizado en vez de a "hoy", para que el resultado sea
+    reproducible y comparable con la ficha de los últimos 12 meses.
+    """
+    fecha_final = pd.Timestamp(fecha_final)
+    fecha_inicio = fecha_final - pd.DateOffset(years=int(años)) + pd.Timedelta(days=1)
+    return fecha_inicio, fecha_final
+
+
+def calcular_escenario_multianual(
+    precios_historicos: pd.Series,
+    pagos_historicos: pd.DataFrame,
+    fecha_final,
+    años: int,
+    capital_invertido: float = 10000.0,
+) -> dict:
+    """Indicadores del escenario de inversión de un ticker sobre la ventana móvil de `años` años.
+
+    Réplica de la metodología de la ficha completa para cliente de los últimos 12
+    meses (`presentacion._calcular_ficha_completa`, modo ventana móvil): mismo
+    tratamiento del precio inicial (primer cierre disponible en la ventana) y final,
+    títulos adquiridos con `capital_invertido // precio_inicial`, plusvalía y
+    distribuciones a nivel de la posición completa, y el mismo supuesto de que las
+    distribuciones se reciben en efectivo (no se reinvierten). Agrega, para el
+    horizonte de `N = años`: la distribución promedio anual (`distribuciones_totales
+    / N`), el CAGR y el rendimiento anual simple (`rendimiento_total / N`).
+
+    `precios_historicos` (Series de cierres indexada por fecha) y `pagos_historicos`
+    (DataFrame con `ex_date`/`amount_mxn`) deben cubrir al menos toda la ventana; el
+    filtro de suficiencia de historial se hace antes, en
+    `presentacion._preparar_escenario_multianual`.
+    """
+    if capital_invertido <= 0:
+        raise ValueError("El capital invertido debe ser positivo.")
+    años = int(años)
+    fecha_inicio, fecha_fin = calcular_ventana_multianual(fecha_final, años)
+
+    precios = precios_historicos.sort_index()
+    precios_ventana = precios[(precios.index >= fecha_inicio) & (precios.index <= fecha_fin)]
+    if precios_ventana.empty:
+        raise ValueError(
+            f"No hay precios en la ventana de {años} años ({fecha_inicio:%Y-%m-%d} a {fecha_fin:%Y-%m-%d})."
+        )
+    precio_compra = float(precios_ventana.iloc[0])
+    precio_actual = float(precios_ventana.iloc[-1])
+    fecha_inicial = precios_ventana.index[0]
+    fecha_final_real = precios_ventana.index[-1]
+
+    pagos = pagos_historicos.copy()
+    pagos["ex_date"] = pd.to_datetime(pagos["ex_date"], errors="coerce")
+    pagos["amount_mxn"] = pd.to_numeric(pagos["amount_mxn"], errors="coerce")
+    pagos_ventana = pagos[
+        (pagos["ex_date"] >= fecha_inicio) & (pagos["ex_date"] <= fecha_fin) & pagos["amount_mxn"].notna()
+    ]
+
+    titulos = int(capital_invertido // precio_compra)
+    plusvalia = titulos * (precio_actual - precio_compra)
+    dividendo_por_titulo = float(pagos_ventana["amount_mxn"].sum())
+    distribuciones_totales = titulos * dividendo_por_titulo
+    valor_final_posicion = titulos * precio_actual
+    retorno_total = plusvalia + distribuciones_totales
+    rendimiento_total_pct = retorno_total / capital_invertido * 100
+    plusvalia_pct = plusvalia / capital_invertido * 100
+    distribucion_promedio_anual = distribuciones_totales / años
+    rendimiento_anual_simple_pct = rendimiento_total_pct / años
+
+    # CAGR = ((1 + rend_total/100)^(1/N) − 1) × 100. Si la pérdida total es ≥ 100%
+    # (1 + rend_total/100 ≤ 0) no existe una tasa compuesta anual real: queda NaN
+    # (la ficha lo muestra como "n/a" con nota), no una excepción de raíz negativa.
+    base_cagr = 1 + rendimiento_total_pct / 100
+    cagr_pct = (base_cagr ** (1 / años) - 1) * 100 if base_cagr > 0 else float("nan")
+
+    # Volatilidad del retorno total mensual sobre toda la ventana: misma definición
+    # que la ficha de 12 meses y la multi-periodo (desviación estándar muestral,
+    # ddof=1, anualizada con √12). Queda NaN si no hay al menos 2 retornos mensuales.
+    try:
+        retornos = _retornos_totales_mensuales(precios, pagos, fecha_fin)
+        retornos_ventana = retornos[retornos.index >= fecha_inicio]
+        vol_mensual_pct = float(retornos_ventana.std() * 100) if len(retornos_ventana) >= 2 else float("nan")
+    except Exception:
+        vol_mensual_pct = float("nan")
+    vol_anualizada_pct = vol_mensual_pct * (12**0.5)
+
+    return {
+        "años": años,
+        "fecha_inicio_ventana": fecha_inicio,
+        "fecha_fin_ventana": fecha_fin,
+        "fecha_inicial": fecha_inicial,
+        "fecha_final": fecha_final_real,
+        "capital_invertido": float(capital_invertido),
+        "precio_compra": precio_compra,
+        "precio_actual": precio_actual,
+        "titulos": titulos,
+        "valor_final_posicion": valor_final_posicion,
+        "plusvalia": plusvalia,
+        "plusvalia_pct": plusvalia_pct,
+        "dividendo_por_titulo": dividendo_por_titulo,
+        "distribucion_promedio_anual": distribucion_promedio_anual,
+        "distribuciones_totales": distribuciones_totales,
+        "retorno_total": retorno_total,
+        "cagr_pct": cagr_pct,
+        "rendimiento_anual_simple_pct": rendimiento_anual_simple_pct,
+        "rendimiento_total_pct": rendimiento_total_pct,
+        "volatilidad_mensual_pct": vol_mensual_pct,
+        "volatilidad_anualizada_pct": vol_anualizada_pct,
+        "num_pagos": int(len(pagos_ventana)),
+    }
